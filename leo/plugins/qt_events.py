@@ -326,6 +326,7 @@ class LeoQtEventFilter(QtCore.QObject):
             ('Alt-', 'Alt+'),
             ('Ctrl-', 'Ctrl+'),
             ('Control-', 'Ctrl+'),
+            ('Meta-', 'Meta+'),
             # Use Alt+Key-1, etc.  Sheesh.
             # ('Key-','Key+'),
             ('Shift-', 'Shift+')
@@ -396,7 +397,7 @@ class LeoQtEventFilter(QtCore.QObject):
             # Yet another MacOS hack:
             table = (
                 (qt.AltModifier, 'Alt'), # For Apple keyboard.
-                (qt.MetaModifier, 'Alt'), # For Microsoft keyboard.
+                (qt.MetaModifier, 'Meta'), # For Microsoft keyboard.
                 (qt.ControlModifier, 'Control'),
                 # No way to generate Meta.
                 (qt.ShiftModifier, 'Shift'),
