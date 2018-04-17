@@ -45,7 +45,7 @@ import sys
 #@+node:ekr.20141028061518.17: ** class LeoQtEventFilter
 class LeoQtEventFilter(QtCore.QObject):
     #@+others
-    #@+node:ekr.20110605121601.18539: *3* LeoQtEventFilter.ctor
+    #@+node:ekr.20110605121601.18539: *3* filter.ctor
     def __init__(self, c, w, tag=''):
         '''Ctor for LeoQtEventFilter class.'''
         # g.trace('LeoQtEventFilter',tag,w)
@@ -63,12 +63,13 @@ class LeoQtEventFilter(QtCore.QObject):
         # Support for ctagscompleter.py plugin.
         self.ctagscompleter_active = False
         self.ctagscompleter_onKey = None
-    #@+node:ekr.20110605121601.18540: *3* LeoQtEventFilter.eventFilter
+    #@+node:ekr.20110605121601.18540: *3* filter.eventFilter
     def eventFilter(self, obj, event):
+        # g.trace(obj, event)
         trace = False and not g.unitTesting
-        verbose = True
+        verbose = False
         traceEvent = True # True: call self.traceEvent.
-        traceKey = True
+        traceKey = False
         c = self.c; k = c.k
         eventType = event.type()
         ev = QtCore.QEvent
@@ -82,6 +83,9 @@ class LeoQtEventFilter(QtCore.QObject):
         # Important:
         # QLineEdit: ignore all key events except keyRelease events.
         # QTextEdit: ignore all key events except keyPress events.
+        if c.frame and c.frame.top and obj is c.frame.top.lineEdit and eventType == ev.FocusIn:
+            if k.getStateKind() == 'getArg':
+                c.frame.top.lineEdit.restore_selection()
         if eventType in lineEditKeyKinds:
             p = c.currentPosition()
             isEditWidget = obj == c.frame.tree.edit_widget(p)
@@ -106,7 +110,7 @@ class LeoQtEventFilter(QtCore.QObject):
             elif k.inState():
                 override = not ignore # allow all keystrokes.
             else:
-                override = len(aList) > 0
+                override = bool(aList)
         else:
             override = False; tkKey = '<no key>'
             if self.tag == 'body':
@@ -123,7 +127,10 @@ class LeoQtEventFilter(QtCore.QObject):
                 w = self.w # Pass the wrapper class, not the wrapped widget.
                 qevent = event
                 event = self.create_key_event(event, c, w, ch, tkKey, shortcut)
-                k.masterKeyHandler(event)
+                try:
+                    k.masterKeyHandler(event)
+                except Exception:
+                    g.es_exception()
                 if g.app.gui.insert_char_flag:
                     # if trace and traceKey: g.trace('*** insert_char_flag',event.text())
                     g.trace('*** insert_char_flag', qevent.text())
@@ -140,7 +147,8 @@ class LeoQtEventFilter(QtCore.QObject):
             # Trace non-key events.
             self.traceEvent(obj, event, tkKey, override)
         return override
-    #@+node:ekr.20110605195119.16937: *3* LeoQtEventFilter.create_key_event
+    #@+node:ekr.20120204061120.10088: *3* filter.Key construction
+    #@+node:ekr.20110605195119.16937: *4* filter.create_key_event
     def create_key_event(self, event, c, w, ch, tkKey, shortcut):
         trace = False and not g.unitTesting; verbose = False
         if trace and verbose: g.trace('ch: %s, tkKey: %s, shortcut: %s' % (
@@ -172,16 +180,15 @@ class LeoQtEventFilter(QtCore.QObject):
                 shortcut = darwinmap[tkKey]
         char = ch
         # Auxiliary info.
-        x = hasattr(event, 'x') and event.x or 0
-        y = hasattr(event, 'y') and event.y or 0
+        x = getattr(event, 'x', None) or 0
+        y = getattr(event, 'y', None) or 0
         # Support for fastGotoNode plugin
-        x_root = hasattr(event, 'x_root') and event.x_root or 0
-        y_root = hasattr(event, 'y_root') and event.y_root or 0
+        x_root = getattr(event, 'x_root', None) or 0
+        y_root = getattr(event, 'y_root', None) or 0
         if trace and verbose: g.trace('ch: %s, shortcut: %s printable: %s' % (
             repr(ch), repr(shortcut), ch in string.printable))
         return leoGui.LeoKeyEvent(c, char, event, shortcut, w, x, y, x_root, y_root)
-    #@+node:ekr.20120204061120.10088: *3* Key construction
-    #@+node:ekr.20110605121601.18543: *4* LeoQtEventFilter.toTkKey & helpers (must not change!)
+    #@+node:ekr.20110605121601.18543: *4* filter.toTkKey & helpers (must not change!)
     def toTkKey(self, event):
         '''
         Return tkKey,ch,ignore:
@@ -201,7 +208,7 @@ class LeoQtEventFilter(QtCore.QObject):
         tkKey, ch, ignore = self.tkKey(
             event, mods, keynum, text, toString, ch)
         return tkKey, ch, ignore
-    #@+node:ekr.20110605121601.18546: *5* LeoQtEventFilter.tkKey & helper
+    #@+node:ekr.20110605121601.18546: *5* filter.tkKey & helper
     def tkKey(self, event, mods, keynum, text, toString, ch):
         '''Carefully convert the Qt key to a
         Tk-style binding compatible with Leo's core
@@ -246,7 +253,7 @@ class LeoQtEventFilter(QtCore.QObject):
         ignore = not ch # Essential
         ch = text or toString
         return tkKey, ch, ignore
-    #@+node:ekr.20110605121601.18547: *6* LeoQtEventFilter.char2tkName
+    #@+node:ekr.20110605121601.18547: *6* filter.char2tkName
     char2tkNameDict = {
         # Part 1: same as g.app.guiBindNamesDict
         "&": "ampersand",
@@ -311,13 +318,13 @@ class LeoQtEventFilter(QtCore.QObject):
         val = self.char2tkNameDict.get(ch)
         # g.trace(repr(ch),repr(val))
         return val
-    #@+node:ekr.20120204061120.10087: *4* LeoQtEventFilter.Common key construction helpers
-    #@+node:ekr.20110605121601.18541: *5* LeoQtEventFilter.isSpecialOverride
+    #@+node:ekr.20120204061120.10087: *4* filter.Common key construction helpers
+    #@+node:ekr.20110605121601.18541: *5* filter.isSpecialOverride
     def isSpecialOverride(self, tkKey, ch):
         '''Return True if tkKey is a special Tk key name.
         '''
         return tkKey or ch in self.flashers
-    #@+node:ekr.20110605121601.18542: *5* LeoQtEventFilter.toStroke
+    #@+node:ekr.20110605121601.18542: *5* filter.toStroke
     def toStroke(self, tkKey, ch): # ch is unused
         '''Convert the official tkKey name to a stroke.'''
         trace = False and not g.unitTesting
@@ -326,16 +333,16 @@ class LeoQtEventFilter(QtCore.QObject):
             ('Alt-', 'Alt+'),
             ('Ctrl-', 'Ctrl+'),
             ('Control-', 'Ctrl+'),
-            ('Meta-', 'Meta+'),
             # Use Alt+Key-1, etc.  Sheesh.
             # ('Key-','Key+'),
+            ('Meta-', 'Meta+'), # 2016/06/13: per Karsten Wolf.
             ('Shift-', 'Shift+')
         )
         for a, b in table:
             s = s.replace(a, b)
         if trace: g.trace('tkKey', tkKey, '-->', s)
         return s
-    #@+node:ekr.20110605121601.18544: *5* LeoQtEventFilter.qtKey
+    #@+node:ekr.20110605121601.18544: *5* filter.qtKey
     def qtKey(self, event):
         '''
         Return the components of a Qt key event.
@@ -387,102 +394,134 @@ class LeoQtEventFilter(QtCore.QObject):
                 'keynum %7x ch %3s toString %s %s' % (
                 keynum, repr(ch), mods, repr(toString)))
         return keynum, text, toString, ch
-    #@+node:ekr.20120204061120.10084: *5* LeoQtEventFilter.qtMods
+    #@+node:ekr.20120204061120.10084: *5* filter.qtMods
     def qtMods(self, event):
         '''Return the text version of the modifiers of the key event.'''
         modifiers = event.modifiers()
         # The order of this table must match the order created by k.strokeFromSetting.
         qt = QtCore.Qt
-        if sys.platform.startswith('darwin'):
-            # Yet another MacOS hack:
-            table = (
-                (qt.AltModifier, 'Alt'), # For Apple keyboard.
-                (qt.MetaModifier, 'Meta'), # For Microsoft keyboard.
-                (qt.ControlModifier, 'Control'),
-                # No way to generate Meta.
-                (qt.ShiftModifier, 'Shift'),
-            )
-        else:
-            table = (
-                (qt.AltModifier, 'Alt'),
-                (qt.ControlModifier, 'Control'),
-                (qt.MetaModifier, 'Meta'),
-                (qt.ShiftModifier, 'Shift'),
-            )
+        # 2016/06/13: toStroke can now generate meta on MacOS.
+        # In other words: only one version of this table is needed.
+        table = (
+            (qt.AltModifier, 'Alt'),
+            (qt.ControlModifier, 'Control'),
+            (qt.MetaModifier, 'Meta'),
+            (qt.ShiftModifier, 'Shift'),
+        )
         mods = [b for a, b in table if (modifiers & a)]
         return mods
-    #@+node:ekr.20140907103315.18767: *3* Tracing
-    #@+node:ekr.20110605121601.18548: *4* LeoQtEventFilter.traceEvent
+    #@+node:ekr.20140907103315.18767: *3* filter.Tracing
+    #@+node:ekr.20110605121601.18548: *4* filter.traceEvent
     def traceEvent(self, obj, event, tkKey, override):
         if g.unitTesting: return
         # http://qt-project.org/doc/qt-4.8/qevent.html#properties
+        exclude_names = ('tree', 'log', 'body', 'minibuffer')
+        traceActivate = True
         traceFocus = False
-        traceKey = True
+        traceHide = False
+        traceHover = False
+        traceKey = False
         traceLayout = False
         traceMouse = False
+        tracePaint = False
+        traceUpdate = False
         c, e = self.c, QtCore.QEvent
         eventType = event.type()
+        # http://doc.qt.io/qt-5/qevent.html
         show = []
         ignore = [
             e.MetaCall, # 43
             e.Timer, # 1
             e.ToolTip, # 110
         ]
-        focus_events = (
-            (e.Enter, 'enter'), # 10
-            (e.Leave, 'leave'), # 11
-            (e.FocusIn, 'focus-in'), # 8
-            (e.FocusOut, 'focus-out'), # 9
-            (e.Hide, 'hide'), # 18
-            (e.HideToParent, 'hide-to-parent'), # 27
-            (e.HoverEnter, 'hover-enter'), # 127
-            (e.HoverLeave, 'hover-leave'), # 128
-            (e.HoverMove, 'hover-move'), # 129
-            # (e.LeaveEditFocus,'leave-edit-focus'), # 151
-            (e.Show, 'show'), # 17
-            (e.ShowToParent, 'show-to-parent'), # 26
+        activate_events = (
+            (e.Close, 'close'), # 19
             (e.WindowActivate, 'window-activate'), # 24
             (e.WindowBlocked, 'window-blocked'), # 103
             (e.WindowUnblocked, 'window-unblocked'), # 104
             (e.WindowDeactivate, 'window-deactivate'), # 25
         )
-        key_events = (
+        focus_events = [
+            (e.Enter, 'enter'), # 10
+            (e.Leave, 'leave'), # 11
+            (e.FocusIn, 'focus-in'), # 8
+            (e.FocusOut, 'focus-out'), # 9
+            (e.ShowToParent, 'show-to-parent'), # 26
+        ]
+        if hasattr(e, 'FocusAboutToChange'):
+            # pylint: disable=no-member
+            focus_events.extend([
+                (e.FocusAboutToChange, 'focus-about-to-change'), # 23
+            ])
+        hide_events = (
+            (e.Hide, 'hide'), # 18
+            (e.HideToParent, 'hide-to-parent'), # 27
+            # (e.LeaveEditFocus,'leave-edit-focus'), # 151
+            (e.Show, 'show'), # 17
+        )
+        hover_events = (
+            (e.HoverEnter, 'hover-enter'), # 127
+            (e.HoverLeave, 'hover-leave'), # 128
+            (e.HoverMove, 'hover-move'), # 129
+        )
+        key_events = [
             (e.KeyPress, 'key-press'), # 6
             (e.KeyRelease, 'key-release'), # 7
             (e.Shortcut, 'shortcut'), # 117
             (e.ShortcutOverride, 'shortcut-override'), # 51
-        )
-        layout_events = (
-            (e.ChildPolished, 'child-polished'), # 69
-            #(e.CloseSoftwareInputPanel,'close-sip'), # 200
-                # Event does not exist on MacOS.
+        ]
+        if hasattr(e, 'InputMethodQuery'):
+            # pylint: disable=no-member
+            key_events.extend([
+                (e.InputMethodQuery, 'input-method-query'), # 207
+            ])
+        layout_events = [
             (e.ChildAdded, 'child-added'), # 68
+            (e.ChildRemoved, 'child-removed'), # 71
             (e.DynamicPropertyChange, 'dynamic-property-change'), # 170
             (e.FontChange, 'font-change'), # 97
             (e.LayoutRequest, 'layout-request'), # 76
             (e.Move, 'move'), # 13 widget's position changed.
-            (e.PaletteChange, 'palette-change'), # 39
-            (e.ParentChange, 'parent-change'), # 21
-            (e.Paint, 'paint'), # 12
-            (e.Polish, 'polish'), # 75
-            (e.PolishRequest, 'polish-request'), # 74
-            # (e.RequestSoftwareInputPanel,'sip'), # 199
-                # Event does not exist on MacOS.
             (e.Resize, 'resize'), # 14
             (e.StyleChange, 'style-change'), # 100
             (e.ZOrderChange, 'z-order-change'), # 126
-        )
+        ]
+        if hasattr(e, 'CloseSoftwareInputPanel'):
+            layout_events.extend([
+                (e.CloseSoftwareInputPanel,'close-sip'), # 200
+            ])
         mouse_events = (
             (e.MouseMove, 'mouse-move'), # 155
             (e.MouseButtonPress, 'mouse-press'), # 2
             (e.MouseButtonRelease, 'mouse-release'), # 3
             (e.Wheel, 'mouse-wheel'), # 31
         )
+        paint_events = [
+            (e.ChildPolished, 'child-polished'), # 69
+            (e.PaletteChange, 'palette-change'), # 39
+            (e.ParentChange, 'parent-change'), # 21
+            (e.Paint, 'paint'), # 12
+            (e.Polish, 'polish'), # 75
+            (e.PolishRequest, 'polish-request'), # 74
+        ]
+        if hasattr(e, 'RequestSoftwareInputPanel'):
+            paint_events.extend([
+                (e.RequestSoftwareInputPanel,'sip'), # 199
+            ])
+        update_events = (
+            (e.UpdateLater, 'update-later'), # 78
+            (e.UpdateRequest, 'update'), #	77
+        )
         option_table = (
+            (traceActivate, activate_events),
             (traceFocus, focus_events),
+            (traceHide, hide_events),
+            (traceHover, hover_events),
             (traceKey, key_events),
             (traceLayout, layout_events),
             (traceMouse, mouse_events),
+            (tracePaint, paint_events),
+            (traceUpdate, update_events),
         )
         for option, table in option_table:
             if option:
@@ -491,20 +530,26 @@ class LeoQtEventFilter(QtCore.QObject):
                 for n, tag in table:
                     ignore.append(n)
         for val, kind in show:
+            if self.tag in exclude_names:
+                return
             if eventType == val:
-                g.trace(
-                    '%5s %18s in-state: %5s key: %s override: %s: obj: %s' % (
-                    self.tag, kind, repr(c.k and c.k.inState()), tkKey, override, obj))
+                if traceKey:
+                    g.trace(
+                        '%-25s %-25s in-state: %5s key: %s override: %s: obj: %s' % (
+                        kind, self.tag, repr(c.k and c.k.inState()), tkKey, override, obj.__class__.__name__))
+                else:
+                    g.trace('%-25s %-25s %s' % (kind, self.tag, obj.__class__.__name__))
                 return
         if eventType not in ignore:
-            g.trace('%3s:%s obj:%s' % (eventType, 'unknown', obj))
-    #@+node:ekr.20131121050226.16331: *4* LeoQtEventFilter.traceWidget
+            g.trace('%-25s %-25s %s' % (eventType, self.tag, obj.__class__.__name__))
+    #@+node:ekr.20131121050226.16331: *4* filter.traceWidget
     def traceWidget(self, event):
         '''Show unexpected events in unusual widgets.'''
         # py-lint: disable=E1101
         # E1101:9240,0:Class 'QEvent' has no 'CloseSoftwareInputPanel' member
         # E1101:9267,0:Class 'QEvent' has no 'RequestSoftwareInputPanel' member
         if not g.app.debug_app: return
+        verbose = False
         c = self.c
         e = QtCore.QEvent
         assert isinstance(event, QtCore.QEvent)
@@ -537,6 +582,7 @@ class LeoQtEventFilter(QtCore.QObject):
             e.MouseButtonRelease: 'mouse-button-release', # 3
             e.MouseButtonDblClick: 'mouse-button-double-click', # 4
             e.MouseMove: 'mouse-move', # 5
+            e.MouseTrackingChange: 'mouse-tracking-change', # 105
             e.Paint: 'paint', # 12
             e.PaletteChange: 'palette-change', # 39
             e.ParentChange: 'parent-change', # 21
@@ -582,7 +628,7 @@ class LeoQtEventFilter(QtCore.QObject):
             c.frame.log and c.frame.log.logCtrl and c.frame.log.logCtrl.widget,
         )
         w = QtWidgets.QApplication.focusWidget()
-        if g.app.debug_widgets: # verbose:
+        if verbose or g.app.debug_widgets:
             for d in (ignore_d, focus_d, line_edit_ignore_d, none_ignore_d):
                 t = d.get(et)
                 if t: break

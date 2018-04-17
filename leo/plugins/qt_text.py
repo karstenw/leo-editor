@@ -23,6 +23,7 @@ class QTextMixin(object):
         self.permanent = True # False if selecting the minibuffer will make the widget go away.
         self.configDict = {} # Keys are tags, values are colors (names or values).
         self.configUnderlineDict = {} # Keys are tags, values are True
+        # self.formatDict = {} # Keys are tags, values are actual QTextFormat objects.
         self.useScintilla = False # This is used!
         self.virtualInsertPoint = None
         if c:
@@ -35,7 +36,7 @@ class QTextMixin(object):
         if name == '1':
             w.leo_p = None # Will be set when the second editor is created.
         else:
-            w.leo_p = p.copy()
+            w.leo_p = p and p.copy()
         w.leo_active = True
         # New in Leo 4.4.4 final: inject the scrollbar items into the text widget.
         w.leo_bodyBar = None
@@ -125,14 +126,6 @@ class QTextMixin(object):
             c.setChanged(True)
         c.frame.body.updateEditors()
         c.frame.tree.updateIcon(p)
-        if 1: # This works, and is probably better.
-            # Set a hook for the old jEdit colorer.
-            colorer = c.frame.body.colorizer.highlighter.colorer
-            colorer.initFlag = True
-        else:
-            # Allow incremental recoloring.
-            c.incrementalRecolorFlag = True
-            c.outerUpdate()
     #@+node:ekr.20140901122110.18734: *3* qtm.Generic high-level interface
     # These call only wrapper methods.
     #@+node:ekr.20140902181058.18645: *4* qtm.Enable/disable
@@ -148,13 +141,11 @@ class QTextMixin(object):
 
     def clipboard_clear(self):
         g.app.gui.replaceClipboardWith('')
-    #@+node:ekr.20140901062324.18698: *4* qtm.Focus
+    #@+node:ekr.20140901062324.18698: *4* qtm.setFocus
     def setFocus(self):
         '''QTextMixin'''
-        trace = False and not g.unitTesting
-        if trace: print('BaseQTextWrapper.setFocus',
-            # g.app.gui.widget_name(self.widget),
-            self.widget, g.callers(3))
+        trace = (False or g.app.trace_focus) and not g.unitTesting
+        if trace: print('BaseQTextWrapper.setFocus', self.widget)
         # Call the base class
         assert isinstance(self.widget, (
             QtWidgets.QTextBrowser,
@@ -358,7 +349,7 @@ class QLineEditWrapper(QTextMixin):
         '''QHeadlineWrapper.'''
         pass
     #@+node:ekr.20110605121601.18125: *4* qlew.setAllText
-    def setAllText(self, s, h=None):
+    def setAllText(self, s):
         '''Set all text of a Qt headline widget.'''
         if self.check():
             w = self.widget
@@ -413,7 +404,7 @@ class QLineEditWrapper(QTextMixin):
 class LeoLineTextWidget(QtWidgets.QFrame):
     '''A QFrame supporting gutter line numbers. This class *has* a QTextEdit.'''
     #@+others
-    #@+node:ekr.20150403094706.9: *3* __init__
+    #@+node:ekr.20150403094706.9: *3* __init__(LeoLineTextWidget)
     def __init__(self, c, e, *args):
         '''Ctor for LineTextWidget.'''
         QtWidgets.QFrame.__init__(self, *args)
@@ -449,7 +440,7 @@ if QtWidgets:
     class LeoQTextBrowser(QtWidgets.QTextBrowser):
         '''A subclass of QTextBrowser that overrides the mouse event handlers.'''
         #@+others
-        #@+node:ekr.20110605121601.18006: *3*  lqtb.ctor
+        #@+node:ekr.20110605121601.18006: *3*  lqtb.ctor (** no longer instantiates leo_h)
         def __init__(self, parent, c, wrapper):
             '''ctor for LeoQTextBrowser class.'''
             # g.trace('(LeoQTextBrowser)',c.shortFileName(),parent,wrapper)
@@ -467,11 +458,6 @@ if QtWidgets:
             # This event handler is the easy way to keep track of the vertical scroll position.
             self.leo_vsb = vsb = self.verticalScrollBar()
             vsb.valueChanged.connect(self.onSliderChanged)
-            # Signal that the widget can accept delayed-load buttons.
-            self.leo_load_button = None
-            self.leo_paste_button = None
-            self.leo_big_text = None
-            # g.trace('(LeoQTextBrowser)',repr(self.leo_wrapper))
             # For QCompleter
             self.leo_q_completer = None
             self.leo_options = None
@@ -785,10 +771,11 @@ if QtWidgets:
 #@+node:ekr.20150403094706.2: ** class NumberBar(QFrame)
 class NumberBar(QtWidgets.QFrame):
     #@+others
-    #@+node:ekr.20150403094706.3: *3* NumberBar.__init__
+    #@+node:ekr.20150403094706.3: *3* NumberBar.__init__& reloadSettings
     def __init__(self, c, e, *args):
         '''Ctor for NumberBar class.'''
-        QtWidgets.QWidget.__init__(self, *args)
+        # g.trace('(NumberBar)')
+        QtWidgets.QFrame.__init__(self, *args)
             # Init the base class.
         self.c = c
         self.edit = e
@@ -799,12 +786,18 @@ class NumberBar(QtWidgets.QFrame):
             # A QFontMetrics
         self.highest_line = 0
             # The highest line that is currently visibile.
+        # Set the name to gutter so that the QFrame#gutter style sheet applies.
+        self.setObjectName('gutter')
+        self.reloadSettings()
+        
+    def reloadSettings(self):
+        c = self.c
+        c.registerReloadSettings(self)
         self.w_adjust = c.config.getInt('gutter-w-adjust') or 12
             # Extra width for column.
         self.y_adjust = c.config.getInt('gutter-y-adjust') or 10
             # The y offset of the first line of the gutter.
-        # Set the name to gutter so that the QFrame#gutter style sheet applies.
-        self.setObjectName('gutter')
+        
     #@+node:ekr.20150403094706.5: *3* NumberBar.update
     def update(self, *args):
         '''
@@ -813,7 +806,7 @@ class NumberBar(QtWidgets.QFrame):
         '''
         # w_adjust is used to compensate for the current line being bold.
         # Always allocate room for 2 columns
-        width = self.fm.width(str(max(10, self.highest_line))) + self.w_adjust
+        width = self.fm.width(str(max(1000, self.highest_line))) + self.w_adjust
         if self.width() != width:
             self.setFixedWidth(width)
         QtWidgets.QWidget.update(self, *args)
@@ -833,16 +826,19 @@ class NumberBar(QtWidgets.QFrame):
         # Paint each visible block.
         painter = QtGui.QPainter(self)
         block = d.begin()
-        n = 0
+        n = i = 0
+        c = self.c
+        translation = c.user_dict.get('line_number_translation', [])
         while block.isValid():
+            i = translation[n] if n < len(translation) else n + 1
             n += 1
             top_left = layout.blockBoundingRect(block).topLeft()
             if top_left.y() > page_bottom:
                 break # Outside the visible area.
             bold = block == current_block
-            self.paintBlock(bold, n, painter, top_left, scroll_y)
+            self.paintBlock(bold, i, painter, top_left, scroll_y)
             block = block.next()
-        self.highest_line = n
+        self.highest_line = i
         painter.end()
         QtWidgets.QWidget.paintEvent(self, event)
             # Propagate the event.
@@ -852,7 +848,10 @@ class NumberBar(QtWidgets.QFrame):
         if bold:
             self.setBold(painter, True)
         s = str(n)
-        x = self.width() - self.fm.width(s) - self.w_adjust
+        pad = max(4, len(str(self.highest_line))) - len(s)
+        s = ' '*pad + s
+        # x = self.width() - self.fm.width(s) - self.w_adjust
+        x = 0
         y = round(top_left.y()) - scroll_y + self.fm.ascent() + self.y_adjust
         painter.drawText(x, y, s)
         if bold:
@@ -902,7 +901,10 @@ class QHeadlineWrapper(QLineEditWrapper):
         '''Return True if the tree item exists and it's edit widget exists.'''
         trace = False and not g.unitTesting
         tree = self.c.frame.tree
-        e = tree.treeWidget.itemWidget(self.item, 0)
+        try:
+            e = tree.treeWidget.itemWidget(self.item, 0)
+        except RuntimeError:
+            return False
         valid = tree.isValidItem(self.item)
         result = valid and e == self.widget
         if trace: g.trace('result %s self.widget %s itemWidget %s' % (
@@ -952,9 +954,15 @@ class QMinibufferWrapper(QLineEditWrapper):
         # It may lag a bit when the style's edited, but the new top
         # level sheet will get pushed down quite frequently.
         self.widget.setStyleSheet(self.c.frame.top.styleSheet())
+
+    def setSelectionRange(self, i, j, insert=None, s=None):
+        QLineEditWrapper.setSelectionRange(self, i, j, insert, s)
+        insert = j if insert is None else insert
+        if self.widget:
+            self.widget._sel_and_insert = (i, j, insert)
 #@+node:ekr.20110605121601.18103: ** class QScintillaWrapper(QTextMixin)
 class QScintillaWrapper(QTextMixin):
-    '''A wrapper for QsciSinctilla supporting the high-level interface.
+    '''A wrapper for QsciScintilla supporting the high-level interface.
 
     This widget will likely always be less capable the QTextEditWrapper.
     To do:
@@ -962,7 +970,7 @@ class QScintillaWrapper(QTextMixin):
     - Add support for all scintilla lexers.
     '''
     #@+others
-    #@+node:ekr.20110605121601.18105: *3* qsciw.ctor & helpers
+    #@+node:ekr.20110605121601.18105: *3* qsciw.ctor
     def __init__(self, widget, c, name=None):
         '''Ctor for the QScintillaWrapper class.'''
         # g.trace('(QScintillaWrapper)',c.shortFileName(),name,g.callers())
@@ -977,7 +985,7 @@ class QScintillaWrapper(QTextMixin):
         self.set_config()
         # Set the signal.
         g.app.gui.setFilter(c, widget, self, tag=name)
-    #@+node:ekr.20110605121601.18106: *4* qsciw.set_config
+    #@+node:ekr.20110605121601.18106: *3* qsciw.set_config
     def set_config(self):
         '''Set QScintillaWrapper configuration options.'''
         c, w = self.c, self.widget
@@ -1152,11 +1160,14 @@ class QScintillaWrapper(QTextMixin):
         row, col = g.convertPythonIndexToRowCol(s, i)
         w.ensureLineVisible(row)
     #@+node:ekr.20110605121601.18113: *4* qsciw.setAllText
-    def setAllText(self, s, h=None):
+    def setAllText(self, s):
         '''Set the text of a QScintilla widget.'''
         w = self.widget
         assert isinstance(w, Qsci.QsciScintilla), w
-        w.setText(g.toEncodedString(s))
+        if g.isPython3:
+            w.setText(s)
+        else:
+            w.setText(g.toEncodedString(s))
         # w.update()
     #@+node:ekr.20110605121601.18114: *4* qsciw.setInsertPoint
     def setInsertPoint(self, i, s=None):
@@ -1267,17 +1278,13 @@ class QTextEditWrapper(QTextMixin):
     def delete(self, i, j=None):
         '''QTextEditWrapper.'''
         trace = False and not g.unitTesting
-        c, w = self.c, self.widget
-        colorer = c.frame.body.colorizer.highlighter.colorer
-        # n = colorer.recolorCount
+        w = self.widget
         if trace: g.trace(self.getSelectionRange())
         i = self.toPythonIndex(i)
         if j is None: j = i + 1
         j = self.toPythonIndex(j)
         if i > j: i, j = j, i
         if trace: g.trace(i, j)
-        # Set a hook for the colorer.
-        colorer.initFlag = True
         sb = w.verticalScrollBar()
         pos = sb.sliderPosition()
         cursor = w.textCursor()
@@ -1303,7 +1310,6 @@ class QTextEditWrapper(QTextMixin):
         finally:
             self.changingText = False
         sb.setSliderPosition(pos)
-        # g.trace('%s calls to recolor' % (colorer.recolorCount-n))
     #@+node:ekr.20110605121601.18080: *4* qtew.flashCharacter
     def flashCharacter(self, i, bg='white', fg='red', flashes=3, delay=75):
         '''QTextEditWrapper.'''
@@ -1394,17 +1400,13 @@ class QTextEditWrapper(QTextMixin):
     #@+node:ekr.20110605121601.18089: *4* qtew.insert (avoid call to setAllText)
     def insert(self, i, s):
         '''QTextEditWrapper.'''
-        c, w = self.c, self.widget
-        colorer = c.frame.body.colorizer.highlighter.colorer
-        # n = colorer.recolorCount
-        # Set a hook for the colorer.
-        colorer.initFlag = True
+        w = self.widget
         i = self.toPythonIndex(i)
         cursor = w.textCursor()
         try:
             self.changingText = True # Disable onTextChanged.
             cursor.setPosition(i)
-            cursor.insertText(s) # This cause an incremental call to recolor.
+            cursor.insertText(s)
             w.setTextCursor(cursor) # Bug fix: 2010/01/27
         finally:
             self.changingText = False
@@ -1415,10 +1417,16 @@ class QTextEditWrapper(QTextMixin):
         w = self.widget
         tc = QtGui.QTextCursor
         d = {
+            'begin-line': tc.StartOfLine, # Was start-line
+            'down': tc.Down,
+            'end': tc.End,
+            'end-line': tc.EndOfLine, # Not used.
             'exchange': True, # Dummy.
-            'down': tc.Down, 'end': tc.End, 'end-line': tc.EndOfLine,
-            'home': tc.Start, 'left': tc.Left, 'page-down': tc.Down,
-            'page-up': tc.Up, 'right': tc.Right, 'start-line': tc.StartOfLine,
+            'home': tc.Start,
+            'left': tc.Left,
+            'page-down': tc.Down,
+            'page-up': tc.Up,
+            'right': tc.Right,
             'up': tc.Up,
         }
         kind = kind.lower()
@@ -1447,13 +1455,10 @@ class QTextEditWrapper(QTextMixin):
         if trace: g.trace(kind, 'extend', extend, 'yscroll', w.getYScrollPosition())
         self.rememberSelectionAndScroll()
         # Fix bug 218: https://github.com/leo-editor/leo-editor/issues/218
-        if 1:
-            cursor = w.textCursor()
-            sel = cursor.selection().toPlainText()
-            if sel:
-                cb = g.app.gui.qtApp.clipboard()
-                cb.setText(sel, mode=cb.Selection)
-            # QtWidgets.QApplication.processEvents()
+        cursor = w.textCursor()
+        sel = cursor.selection().toPlainText()
+        if sel and hasattr(g.app.gui, 'setClipboardSelection'):
+            g.app.gui.setClipboardSelection(sel)
         self.c.frame.updateStatusLine()
     #@+node:btheado.20120129145543.8180: *5* qtew.pageUpDown
     def pageUpDown(self, op, moveMode):
@@ -1536,35 +1541,24 @@ class QTextEditWrapper(QTextMixin):
         if trace: g.trace(self.getInsertPoint())
         self.widget.ensureCursorVisible()
     #@+node:ekr.20110605121601.18092: *4* qtew.setAllText
-    def setAllText(self, s, h=None):
+    def setAllText(self, s):
         '''Set the text of body pane.'''
         trace = False and not g.unitTesting
-        trace_time = True and not g.unitTesting
+        trace_time = True
         c, w = self.c, self.widget
-        if h is None: h = c.p and c.p.h or '<no p>'
+        h = c.p.h if c.p else '<no p>'
         if trace and not trace_time: g.trace(len(s), h)
-        colorizer = c.frame.body.colorizer
-        highlighter = colorizer.highlighter
-        # Be careful: Scintilla doesn't have a colorer.
-        colorer = highlighter and highlighter.colorer
-        if colorer: colorer.initFlag = True
         try:
             if trace and trace_time:
                 t1 = time.time()
             self.changingText = True # Disable onTextChanged.
-            colorizer.changingText = True # Disable colorizer.
-            # g.trace('read/write text')
             w.setReadOnly(False)
             w.setPlainText(s)
-            # w.update()
-                # 2014/08/30: w.update does not ensure that all text is loaded
-                # before the user starts editing it!
             if trace and trace_time:
                 delta_t = time.time() - t1
                 g.trace('%4.2f sec. %6s chars %s' % (delta_t, len(s), h))
         finally:
             self.changingText = False
-            colorizer.changingText = False
     #@+node:ekr.20110605121601.18095: *4* qtew.setInsertPoint
     def setInsertPoint(self, i, s=None):
         # Fix bug 981849: incorrect body content shown.
@@ -1614,12 +1608,8 @@ class QTextEditWrapper(QTextMixin):
             tc.setPosition(i, tc.KeepAnchor)
         w.setTextCursor(tc)
         # Fix bug 218: https://github.com/leo-editor/leo-editor/issues/218
-        if 1:
-            app = QtWidgets.QApplication
-            cb = app.clipboard()
-            if s[i: j]:
-                cb.setText(s[i: j], mode=cb.Selection)
-            # QtWidgets.QApplication.processEvents()
+        if hasattr(g.app.gui, 'setClipboardSelection'):
+            g.app.gui.setClipboardSelection(s[i:j])
         # Remember the values for v.restoreCursorAndScroll.
         v = self.c.p.v # Always accurate.
         v.insertSpot = ins

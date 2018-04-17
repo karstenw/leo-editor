@@ -6,8 +6,10 @@
 # are labeled: # undoc: where the AttributeError comes from other implementations
 # of method.
 #@@c
+# pylint: disable=arguments-differ
 #@+<< imports >>
 #@+node:ekr.20150107090324.2: ** << imports >>
+# pylint: disable=wrong-import-order
 import leo.core.leoGlobals as g
 import leo.core.leoChapters as leoChapters
 import leo.core.leoGui as leoGui
@@ -20,6 +22,9 @@ try:
 except ImportError:
     import __builtin__ as builtins # Python 2.
 import os
+if 1: # Limit the disable to this statement.
+    # pylint: disable=no-member
+    get_input = input if g.isPython3 else builtins.raw_input
 #@-<< imports >>
 #@+<< TODO >>
 #@+node:ekr.20150107090324.3: ** << TODO >>
@@ -45,7 +50,6 @@ import os
 # Ideally, comments in the body go away as the "leoGUI interface" improves.
 # Written on a hundred-column terminal. :S
 #@-<< TODO >>
-get_input = input if g.isPython3 else builtins.raw_input
 #@+others
 #@+node:ekr.20150107090324.4: ** init
 def init():
@@ -122,7 +126,6 @@ class textGui(leoGui.LeoGui):
     #@+node:ekr.20150107090324.18: *3* text_run & helper
     def text_run(self):
         frame_idx = 0
-        get_input = input if g.isPython3 else builtins.raw_input
         while not self.killed:
             # Frames can come and go.
             if frame_idx > len(self.frames) - 1:
@@ -170,6 +173,7 @@ class TextFrame(leoFrame.LeoFrame):
         leoFrame.LeoFrame.__init__(self, c, gui)
         assert self.c == c
         self.top = None ###
+        self.ratio = self.secondary_ratio = 0.0
         ### self.title = title # Per leoFrame.__init__
     #@+node:ekr.20150107090324.23: *3* createFirstTreeNode
     def createFirstTreeNode(self):
@@ -204,6 +208,9 @@ class TextFrame(leoFrame.LeoFrame):
         c.setLog() # writeWaitingLog hangs without this(!)
         # So updateRecentFiles will update our menus.
         g.app.windowList.append(f)
+    #@+node:ekr.20161118195504.1: *3* getFocus
+    def getFocus(self):
+        return None
     #@+node:ekr.20150107090324.27: *3* setInitialWindowGeometry
     def setInitialWindowGeometry(self): pass # N/A
     #@+node:ekr.20150107090324.28: *3* setMinibufferBindings
@@ -215,7 +222,6 @@ class TextFrame(leoFrame.LeoFrame):
     #@+node:ekr.20150107090324.29: *3* text_key
     def text_key(self):
         c = self.c; k = c.k; w = self.body.bodyCtrl
-        get_input = input if g.isPython3 else builtins.raw_input
         key = get_input('Keystroke > ')
         if not key: return
 
@@ -284,7 +290,7 @@ class textMenuCascade(object):
     #@+node:ekr.20150107090324.39: *3* display
     def display(self):
         ret = underline(self.label, self.underline)
-        if len(self.menu.entries) == 0:
+        if not self.menu.entries:
             ret += ' [Submenu with no entries]'
         return ret
     #@-others
@@ -426,10 +432,12 @@ class textTree(leoFrame.LeoTree):
     #@+node:ekr.20150107090324.62: *3* begin/endUpdate & redraw/now
     def redraw(self, p=None, scroll=True, forceDraw=False):
         self.text_draw_tree()
+        
+    redraw_now = redraw
 
-    def redraw_now(self, p=None, scroll=True, forceDraw=False):
-        if forceDraw:
-            self.redraw()
+    # def redraw_now(self, p=None, scroll=True, forceDraw=False):
+        # if forceDraw:
+            # self.redraw()
     #@+node:ekr.20150107090324.63: *3* endUpdate
     #@+node:ekr.20150107090324.64: *3* __init__
     def __init__(self, frame):

@@ -10,11 +10,12 @@ Callers are expected to use the *PyQt5* spellings of modules:
 - Use QtGui, not QtWidgets, for all other classes in the *PyQt4* QtGui module.
 - Similarly, use QtWebKitWidgets rather than QtWebKit.
 '''
-# pylint: disable=unused-import
+# pylint: disable=unused-import, no-member
 
 # Define...
     # Qt, QtConst, QtCore, QtGui, QtWidgets, QUrl
-    # QtDeclarative, Qsci, QString, QtSvg, QtWebKit, QtWebKitWidgets
+    # QtDeclarative, QtMultimedia, Qsci, QString, QtSvg,
+    # QtWebKit, QtWebKitWidgets
     # printsupport
 import leo.core.leoGlobals as g
 strict = False
@@ -42,11 +43,11 @@ if fail:
     isQt5 = False
     QString = g.u
     Qt = QtConst = QtCore = QtGui = QtWidgets = QUrl = None
-    QtDeclarative = Qsci = QtSvg = QtWebKit = QtWebKitWidgets = None
+    QtDeclarative = Qsci = QtSvg = QtMultimedia = QtWebKit = QtWebKitWidgets = None
     phonon = uic = None
+    QtMultimedia = None # Replacement for phonon.
     qt_version = '<no version>'
     printsupport = None
-    assert QUrl # for pyflakes
 elif isQt5:
     try:
         from PyQt5 import QtCore
@@ -97,6 +98,10 @@ elif isQt5:
     except ImportError:
         phonon = None
     try:
+        from PyQt5 import QtMultimedia
+    except ImportError:
+        QtMultimedia = None
+    try:
         from PyQt5 import Qsci
     except ImportError:
         Qsci = None
@@ -111,11 +116,24 @@ elif isQt5:
     try:
         from PyQt5 import QtWebKit
     except ImportError:
-        QtWebKit = None
+        # 2016/07/13: Reinhard: Support pyqt 5.6...
+        try:
+            from PyQt5 import QtWebEngineCore as QtWebKit
+        except ImportError:
+            QtWebKit = None
     try:
         import PyQt5.QtWebKitWidgets as QtWebKitWidgets
     except ImportError:
-        QtWebKitWidgets = None
+        try:
+            # https://groups.google.com/d/msg/leo-editor/J_wVIzqQzXg/KmXMxJSAAQAJ
+            # Reinhard: Support pyqt 5.6...
+            # used by viewrendered(2|3).py, bigdash.py, richtext.py.
+            import PyQt5.QtWebEngineWidgets as QtWebKitWidgets
+            QtWebKitWidgets.QWebView = QtWebKitWidgets.QWebEngineView
+            QtWebKit.QWebSettings = QtWebKitWidgets.QWebEngineSettings
+            QtWebKitWidgets.QWebPage = QtWebKitWidgets.QWebEnginePage
+        except ImportError:
+            QtWebKitWidgets = None
 else:
     try:
         QString = QtCore.QString
@@ -125,6 +143,8 @@ else:
         import PyQt4.QtDeclarative as QtDeclarative
     except ImportError:
         QtDeclarative = None
+    QtMultimedia = None
+        # Does not exist on Qt4.
     try:
         import PyQt4.phonon as phonon
         phonon = phonon.Phonon

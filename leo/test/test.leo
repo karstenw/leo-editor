@@ -2,8 +2,8 @@
 <!-- Created by Leo: http://leoeditor.com/leo_toc.html -->
 <leo_file xmlns:leo="http://leoeditor.com/namespaces/leo-python-editor/1.1" >
 <leo_header file_format="2" tnodes="0" max_tnode_index="0" clone_windows="0"/>
-<globals body_outline_ratio="0.48" body_secondary_ratio="0.65">
-	<global_window_position top="148" left="367" height="826" width="1010"/>
+<globals body_outline_ratio="0.50" body_secondary_ratio="0.56">
+	<global_window_position top="107" left="81" height="864" width="1383"/>
 	<global_log_window_position top="0" left="0" height="0" width="0"/>
 </globals>
 <preferences/>
@@ -11,11 +11,12 @@
 <vnodes>
 <v t="ekr.20070416075121"><vh>Startup</vh>
 <v t="ekr.20070224123943"><vh>@settings</vh>
-<v t="ekr.20150618075639.1"><vh>@bool minibuffer_find_mode = True</vh></v>
-<v t="ekr.20150619071508.1"><vh>@bool use_find_dialog = False</vh></v>
+<v t="ekr.20071025193940"><vh>@@enabled-plugins</vh></v>
+<v t="ekr.20150618075639.1"><vh>@bool minibuffer_find_mode = False</vh></v>
+<v t="ekr.20170709101639.1"><vh>@bool use_find_dialog = True</vh></v>
 <v t="ekr.20140808094008.3549"><vh>@bool vim_mode = False</vh></v>
 <v t="ekr.20091230064146.1911"><vh>@data import_xml_tags</vh></v>
-<v t="ekr.20071025193940"><vh>@@enabled-plugins</vh></v>
+<v t="ekr.20160930062850.1"><vh>@int qweb_view_font_size = 30</vh></v>
 <v t="ekr.20110510110227.2439"><vh>Autocompleter settings</vh>
 <v t="ekr.20110512085154.2447"><vh>@bool auto_tab_complete = True</vh></v>
 <v t="ekr.20110511061102.5232"><vh>@bool enable_autocompleter_initially = False</vh></v>
@@ -30,12 +31,6 @@
 <v t="ekr.20110521072459.2464"><vh>@@color keyword3_color = orange</vh></v>
 <v t="ekr.20110521072459.2465"><vh>@@color keyword4_color = pink</vh></v>
 </v>
-<v t="ekr.20120928143821.3161"><vh>Log pane colors</vh>
-<v t="ekr.20120928143821.3162"><vh>@@color log_error_color = orange</vh></v>
-<v t="ekr.20120928143821.3168"><vh>@@color log_warning_color = purple</vh></v>
-<v t="ekr.20120928143821.3163"><vh>@@color log_text_foreground_color = pink</vh></v>
-<v t="ekr.20120928143821.3164"><vh>@@color log_text_background_color = None</vh></v>
-</v>
 <v t="ekr.20100118190256.2015"><vh>Files &amp; directories</vh>
 <v t="ekr.20101009105505.2295"><vh>@bool put_expansion_bits_in_leo_files = False</vh></v>
 <v t="ekr.20080822153619.1"><vh>@string shadow_subdir = .leo/shadow</vh></v>
@@ -46,12 +41,16 @@
 <v t="ekr.20080729153237.3"><vh>@bool trace_gc_calls = False</vh></v>
 <v t="ekr.20080729153237.4"><vh>@bool trace_gc_verbose = False</vh></v>
 </v>
+<v t="ekr.20120928143821.3161"><vh>Log pane colors</vh>
+<v t="ekr.20120928143821.3162"><vh>@@color log_error_color = orange</vh></v>
+<v t="ekr.20120928143821.3168"><vh>@@color log_warning_color = purple</vh></v>
+<v t="ekr.20120928143821.3163"><vh>@@color log_text_foreground_color = pink</vh></v>
+<v t="ekr.20120928143821.3164"><vh>@@color log_text_background_color = None</vh></v>
+</v>
 <v t="ekr.20080529111617.1"><vh>Plugins</vh>
 <v t="ekr.20070723091227"><vh>http plugin</vh>
 <v t="ekr.20070723091227.1"><vh>@bool http_active = True</vh></v>
-<v t="ekr.20070723091227.2"><vh>@int</vh>
-<v t="ekr.20090316115500.1"><vh>port = 8080</vh></v>
-</v>
+<v t="ekr.20090316115500.1"><vh>@int port = 8080</vh></v>
 <v t="ekr.20070723091227.3"><vh>@string rst_http_attributename = 'rst_http_attribute'</vh></v>
 </v>
 <v t="ekr.20080529111617.2"><vh>cleo</vh>
@@ -336,6 +335,8 @@
 <v t="ekr.20080206055658"><vh>Script to print font settings</vh></v>
 </v>
 </v>
+<v t="ekr.20150618075639.1"></v>
+<v t="ekr.20170709101639.1"></v>
 <v t="ekr.20160420153653.1"><vh>Examples</vh>
 <v t="ekr.20131128115544.3333"><vh>display xml as Leo outlines using css</vh>
 <v t="ekr.20131106150237.3641"><vh>@button display css</vh>
@@ -364,6 +365,7 @@
 <v t="ekr.20100108102217.1968"><vh>testKeys</vh></v>
 </v>
 <v t="ekr.20110416065515.2437"><vh>jinja2</vh></v>
+<v t="ekr.20160421123215.1"><vh>kill all output</vh></v>
 <v t="ekr.20101110190130.2451"><vh>leoremote client</vh></v>
 <v t="ekr.20121011195530.3405"><vh>pyv8</vh></v>
 <v t="ekr.20110325142419.2337"><vh>QCompleter example</vh>
@@ -673,44 +675,7 @@
 <v t="ekr.20120311074029.2736"><vh>@url file://c:/users/edreamleo/ekr.html</vh></v>
 <v t="ekr.20120320072350.2731"><vh>@url ../doc/LeoDocs.leo#Leo 4.10 Release notes</vh></v>
 </v>
-<v t="ekr.20160401061847.1"><vh>viewrendered examples</vh>
-<v t="ekr.20160401073951.1"><vh>Python code</vh></v>
-<v t="ekr.20160401061847.2"><vh>@graphics-script</vh></v>
-<v t="ekr.20160401061847.3"><vh>@html display Leo tree (cool)</vh></v>
-<v t="ekr.20160401061847.4"><vh>@html Leo's home page</vh></v>
-<v t="ekr.20160401061847.5"><vh>@image LeoSplash</vh></v>
-<v t="ekr.20160401061847.6"><vh>@image splash screen</vh></v>
-<v t="ekr.20160401063704.1"><vh>@movie Gayane Ballet (Local file)</vh></v>
-<v t="ekr.20160401061847.8"><vh>@movie Gayane Ballet (Url)</vh></v>
-<v t="ekr.20160401061847.7"><vh>@movie Sample video (Local file)</vh></v>
-<v t="ekr.20160401062424.1"><vh>@movie Sample video (Url)</vh></v>
-<v t="ekr.20160401061847.9"><vh>@networkx my network</vh></v>
-<v t="ekr.20160401061847.10" a="M"><vh>@svg bubbles sources</vh></v>
-<v t="ekr.20160401061847.11"><vh>@svg bubbles.svg</vh></v>
-<v t="ekr.20160401061847.12"><vh>@url Leo's home page (md default)</vh></v>
-<v t="ekr.20160401065134.1"><vh>@url Leo's home page (md explicit)</vh></v>
-<v t="ekr.20160401061847.13"><vh>@url Leo's home page (rST default)</vh></v>
-<v t="ekr.20160401065154.1"><vh>@url Leo's home page (rST explicit)</vh></v>
-<v t="ekr.20160401061847.15"><vh>@url weather (md default)</vh></v>
-<v t="ekr.20160401065735.1"><vh>@url weather (rst default)</vh></v>
-<v t="ekr.20160401061847.16"><vh>docstring test</vh></v>
-<v t="ekr.20160401061847.17" a="M"><vh>markdown test (including url)</vh></v>
-<v t="ekr.20160401061847.18" a="M"><vh>rst test (including url)</vh></v>
-</v>
 <v t="ekr.20100127111116.2059"><vh>wrapping</vh></v>
-</v>
-<v t="ekr.20100205114630.2091"><vh>Files</vh>
-<v t="ekr.20100204062222.2035"><vh>@@@auto C:\leo.repo\trunk\leo\extensions\Pmw\Pmw_1_3\lib</vh></v>
-<v t="ekr.20090706044257.1784"><vh>@@auto ../../install</vh></v>
-<v t="ekr.20091230064146.1912"><vh>@@auto xml-tags-test.xml</vh>
-<v t="ekr.20100110172917.1943"><vh>xml</vh></v>
-<v t="ekr.20100110172917.1944"><vh>test.a</vh></v>
-<v t="ekr.20100110172917.1945"><vh>test-b</vh></v>
-</v>
-<v t="ekr.20100110151049.2004"><vh>@@auto-rst unicode-headline-test.txt</vh>
-<v t="ekr.20100110172917.1961"><vh>section 1: Ę</vh></v>
-</v>
-<v t="ekr.20100203233053.2033"><vh>@@file at-path-in-body-test.py</vh></v>
 </v>
 <v t="ekr.20070517160058.1"><vh>Prototypes</vh>
 <v t="ekr.20080531131542.1"><vh>Prototype of mxTextTools</vh>
@@ -853,8 +818,57 @@
 </v>
 <v t="ekr.20120925105035.3146"><vh>Vertical scroll position probe</vh></v>
 </v>
-<v t="ekr.20160421054609.1"><vh>@clean leo-bridge-test.py</vh></v>
-<v t="ekr.20160421123215.1"><vh>kill all output</vh></v>
+<v t="ekr.20160929143831.1"><vh>matplotlib stuff...</vh>
+<v t="ekr.20160929143831.3"><vh>@pyplot matplotlib animate_decay</vh>
+<v t="ekr.20160929143831.4"><vh>data_gen</vh></v>
+<v t="ekr.20160929143831.5"><vh>init</vh></v>
+<v t="ekr.20160929143831.6"><vh>run</vh></v>
+</v>
+<v t="ekr.20160929143831.7"><vh>@pyplot basic_example</vh>
+<v t="ekr.20160929143831.8"><vh>Figure 1</vh></v>
+<v t="ekr.20160929143831.9"><vh>Figure 2</vh></v>
+</v>
+<v t="ekr.20160929143831.10"><vh>@pyplot barchar_demo</vh></v>
+</v>
+<v t="ekr.20160930220426.1"><vh>MathJax stuff...</vh>
+<v t="ekr.20160930220214.2"><vh>markdown example from .ipynb file</vh></v>
+<v t="ekr.20160930220358.1"><vh>mathjax-test</vh></v>
+<v t="ekr.20160930062725.1"><vh>mathjax-test2</vh></v>
+</v>
+<v t="ekr.20160401061847.1"><vh>Viewrendered examples</vh>
+<v t="ekr.20160401073951.1"><vh>Python code</vh></v>
+<v t="ekr.20160401061847.2"><vh>@graphics-script</vh></v>
+<v t="ekr.20160401061847.3"><vh>@html display Leo tree (cool)</vh></v>
+<v t="ekr.20160401061847.4"><vh>@html Leo's home page</vh></v>
+<v t="ekr.20160401061847.5"><vh>@image LeoSplash</vh></v>
+<v t="ekr.20160401061847.6"><vh>@image splash screen</vh></v>
+<v t="ekr.20160401063704.1"><vh>@movie Gayane Ballet (Local file)</vh></v>
+<v t="ekr.20160401061847.8"><vh>@movie Gayane Ballet (Url)</vh></v>
+<v t="ekr.20160401061847.7"><vh>@movie Sample video (Local file)</vh></v>
+<v t="ekr.20160401062424.1"><vh>@movie Sample video (Url)</vh></v>
+<v t="ekr.20160401061847.9"><vh>@networkx my network</vh></v>
+<v t="ekr.20171020112352.1"><vh>@pyplot matplotlib animate_decay</vh>
+<v t="ekr.20171020112352.2"><vh>data_gen</vh></v>
+<v t="ekr.20171020112352.3"><vh>init</vh></v>
+<v t="ekr.20171020112352.4"><vh>run</vh></v>
+</v>
+<v t="ekr.20171020112405.1"><vh>@pyplot basic_example</vh>
+<v t="ekr.20171020112405.2"><vh>Figure 1</vh></v>
+<v t="ekr.20171020112405.3"><vh>Figure 2</vh></v>
+</v>
+<v t="ekr.20171020112424.1"><vh>@pyplot barchar_demo</vh></v>
+<v t="ekr.20160401061847.10" a="M"><vh>@svg bubbles sources</vh></v>
+<v t="ekr.20160401061847.11"><vh>@svg bubbles.svg</vh></v>
+<v t="ekr.20160401061847.12"><vh>@url Leo's home page (md default)</vh></v>
+<v t="ekr.20160401065134.1"><vh>@url Leo's home page (md explicit)</vh></v>
+<v t="ekr.20160401061847.13"><vh>@url Leo's home page (rST default)</vh></v>
+<v t="ekr.20160401065154.1"><vh>@url Leo's home page (rST explicit)</vh></v>
+<v t="ekr.20160401061847.15"><vh>@url weather (md default)</vh></v>
+<v t="ekr.20160401065735.1"><vh>@url weather (rst default)</vh></v>
+<v t="ekr.20160401061847.16"><vh>docstring test</vh></v>
+<v t="ekr.20160401061847.17" a="M"><vh>markdown test (including url)</vh></v>
+<v t="ekr.20160401061847.18" a="M"><vh>rst test (including url)</vh></v>
+</v>
 </vnodes>
 <tnodes>
 <t tx="edward.20081127113749.10">def undo_replacement(self):
@@ -1155,7 +1169,7 @@ subprocess.Popen(cmdline)
 </t>
 <t tx="ekr.20070224123943"></t>
 <t tx="ekr.20070410063214"></t>
-<t tx="ekr.20070416075121" str_leo_pos="5"></t>
+<t tx="ekr.20070416075121" str_leo_pos="3"></t>
 <t tx="ekr.20070503085527"></t>
 <t tx="ekr.20070517070854">import leoGui
 oldGui = g.app.gui
@@ -1415,7 +1429,6 @@ os.system(r'%s %s %s' % (python,pyrexc,theFile))
         
         </t>
 <t tx="ekr.20070723091227.1"></t>
-<t tx="ekr.20070723091227.2"></t>
 <t tx="ekr.20070723091227.3"></t>
 <t tx="ekr.20070927175908">'''Convert a normal Leo tree to a networkx graph'''
 import networkx as nx
@@ -2741,7 +2754,7 @@ g.es ('total characters: %s, keywords: %s, leo_keywords: %s' % (
 <t tx="ekr.20090218112656.1"># 'self' is now defined in @test and @suite nodes.
 self.assertEqual(1,1)</t>
 <t tx="ekr.20090309064612.2"></t>
-<t tx="ekr.20090309064612.3"></t>
+<t tx="ekr.20090309064612.3"># Why aren't these unit tests??</t>
 <t tx="ekr.20090309064612.4"></t>
 <t tx="ekr.20090316115500.1"></t>
 <t tx="ekr.20090428081009.1">import PyQt4.QtCore as QtCore
@@ -2850,65 +2863,6 @@ register()</t>
 assert g.os_path_exists(fn)
 c.editCommands.insertIconFromFile(path=fn)
 c.bodyWantsFocusNow()</t>
-<t tx="ekr.20090706044257.1784">@language unknown_language
-#!/bin/sh
-#@+leo-ver=4-thin
-#@+node:EKR.20040519082027.33:@file-thin ../../install
-#@@first
-
-# This script installs Leo on *nix.
-# Initial version by by Frank Merenda (fmerenda@yahoo.com)
-
-# Variables...
-LEO_PREFIX=${LEO_PREFIX:-/usr/local}
-LEO_RUN_SCRIPT_OUTPUT="${LEO_PREFIX}/bin/leo"
-
-# Bug fix: 2008/4/8: replace /lib/leo by /lib.
-LEO_LIB_DIR="${LEO_PREFIX}/lib"
-
-echo ""
-echo "Prefix directory set to \"$LEO_PREFIX\""
-
-# Make the directory structure
-if [ ! -d $LEO_LIB_DIR ] ; then
-    echo ""
-    echo Making directory structure $LEO_LIB_DIR
-
-    RESULTS=`mkdir -p -m755 $LEO_LIB_DIR 2&gt;&amp;1`
-    if [ $? -ne 0 ]; then
-        echo Failure making directory $LEO_LIB_DIR!
-        exit 1;
-    fi
-fi
-
-if [ ! -d $LEO_PREFIX/bin ] ; then
-    echo ""
-    echo Making directory structure $LEO_PREFIX/bin
-    RESULTS=`mkdir -p -m755 $LEO_PREFIX/bin 2&gt;&amp;1`
-    if [ $? -ne 0 ]; then
-        echo Failure making directory $LEO_PREFIX/bin!
-        exit 1;
-    fi
-fi
-
-# Copy the files
-cp -rp leo $LEO_LIB_DIR
-chown -R root:root $LEO_LIB_DIR
-
-echo "PYTHONPATH=${LEO_PREFIX}/lib python ${LEO_PREFIX}/lib/leo/core/runLeo.py \"\$@\"" &gt; $LEO_RUN_SCRIPT_OUTPUT
-
-RESULTS=`chmod 755 $LEO_RUN_SCRIPT_OUTPUT`   
-
-echo ""
-echo "Leo installed successfully"
-echo "Make sure ${LEO_PREFIX}/bin is in your path then"
-echo "type 'leo filename.leo' to use it."   
-echo ""
-
-exit 0;
-#@-node:EKR.20040519082027.33:@file-thin ../../install
-#@-leo
-</t>
 <t tx="ekr.20090715064044.1782">@language python
 
 b = p.b
@@ -3651,10 +3605,6 @@ py:if
 py:match
 script
 </t>
-<t tx="ekr.20091230064146.1912">@language xml
-@tabwidth -4
-@others
-</t>
 <t tx="ekr.20091230081322.1919">import unicodedata as u
 table = ('a','9','_',':','.',)
 table2 = (
@@ -3906,27 +3856,6 @@ cursor.movePosition(QtGui.QTextCursor.Up,QtGui.QTextCursor.KeepAnchor,15)
 w.setTextCursor(cursor)
 c.bodyWantsFocusNow()</t>
 <t tx="ekr.20100109084336.1996"></t>
-<t tx="ekr.20100110151049.2004">@language rest
-@tabwidth -4
-@others
-
-.. Warning: this node is ignored when writing this file.
-.. However, @ @rst-options are recognized in this node.
-</t>
-<t tx="ekr.20100110172917.1943">&lt;xml&gt;
-&lt;/xml&gt;
-</t>
-<t tx="ekr.20100110172917.1944">&lt;test.a&gt;
-a
-&lt;/test.a&gt;
-</t>
-<t tx="ekr.20100110172917.1945">&lt;test-b&gt;
-b
-&lt;/test-b&gt;
-</t>
-<t tx="ekr.20100110172917.1961">Section 1: Ę
-
-</t>
 <t tx="ekr.20100118122048.2003"># For new colorizer
 
 python_keyword1_font_family = DejaVu Sans Mono
@@ -4084,16 +4013,9 @@ finally:
     while p.hasChildren():
         p.firstChild().doDelete(newNode = None)
    c.redraw_now()</t>
-<t tx="ekr.20100203233053.2033">@language python
-
-#@path aPathaab
-
-# This is a test2</t>
-<t tx="ekr.20100204062222.2035">This crashed Leo in path.py during startup</t>
 <t tx="ekr.20100205074729.2085"></t>
 <t tx="ekr.20100205074729.2086">line 1: node a changed 2</t>
 <t tx="ekr.20100205074729.2087">@all</t>
-<t tx="ekr.20100205114630.2091"></t>
 <t tx="ekr.20100330082345.2120">@language pseudoplain
 
 This is a [[test]] of something.</t>
@@ -7881,8 +7803,7 @@ def selector(n):
 <t tx="ekr.20131128115544.3333"></t>
 <t tx="ekr.20140808094008.3549">import meta
 print(meta)</t>
-<t tx="ekr.20150618075639.1"></t>
-<t tx="ekr.20150619071508.1"></t>
+<t tx="ekr.20150618075639.1"># Test #516</t>
 <t tx="ekr.20160401061847.1"></t>
 <t tx="ekr.20160401061847.10">@nocolor-node
 &lt;?xml version="1.0" standalone="no"?&gt;
@@ -8535,65 +8456,6 @@ def spam():
     '''This is a docstring.'''
     pass</t>
 <t tx="ekr.20160420153653.1"></t>
-<t tx="ekr.20160421054609.1">'''A simple test bed for the leoBridge module.'''
-import os
-import sys
-
-# Leo files.
-files = [
-    'c:/leo.repo/leo-editor/leo/test/unitTest.leo',
-    'c:/leo.repo/leo-editor/leo/test/test.leo',
-    'c:/xyzzy.xxx',
-]
-
-# Switches...
-gui = 'nullGui'         # 'nullGui', 'qt',
-kill_leo_output = False # True: kill all output produced by g.es_print.
-loadPlugins = False     # True: attempt to load plugins.
-readSettings = True     # True: read standard settings files.
-silent = True           # True: don't print signon messages.
-trace_sys_path = False  # True: trace imports here.
-verbose = True          # True: verbose output.
-
-# Import stuff...
-dir_ = os.path.abspath('.')
-if dir_ not in sys.path:
-    if trace_sys_path: print('appending %s to sys.path' % dir_)
-    sys.path.append(dir_)
-if trace_sys_path:
-    print('sys.path:...\n%s' % '\n'.join(sorted(sys.path)))
-    print('sys.argv: %s %s' % (len(sys.argv), '\n'.join(sys.argv)))
-if gui == 'qt':
-    # Do this here to bypass leoQt g.in_bridge logic.
-    import leo.core.leoQt as leoQt
-import leo.core.leoBridge as leoBridge
-
-controller = leoBridge.controller(
-    gui=gui,
-    loadPlugins=loadPlugins,
-    readSettings=readSettings,
-    silent=silent,
-    verbose=verbose)
-g = controller.globals()
-
-# This kills all output from commanders.
-if kill_leo_output:
-    
-    def do_nothing(*args, **keys):
-        pass
-        
-    g.es_print = do_nothing
-    
-for path in files:
-    if os.path.exists(path):
-        c = controller.openLeoFile(path)
-        if c:
-            n = 0
-            for p in c.all_positions():
-                n += 1
-            print('%s has %s nodes' % (c.shortFileName(), n))
-    else:
-        print('file not found: %s' % path)</t>
 <t tx="ekr.20160421123215.1">def do_nothing(*args, **keys):
     pass
         
@@ -8601,5 +8463,406 @@ g.es_print = do_nothing
 g.es = do_nothing
 
 g.es('test')</t>
+<t tx="ekr.20160929143831.1">@language rest
+@wrap
+
+These appear to work only with Python 2.
+
+http://stackoverflow.com/questions/12459811/how-to-embed-matplotib-in-pyqt-for-dummies
+
+@language python
+
+</t>
+<t tx="ekr.20160929143831.10">#!/usr/bin/env python
+# a bar plot with errorbars
+import numpy as np
+import matplotlib.pyplot as plt
+
+N = 5
+menMeans = (20, 35, 30, 35, 27)
+menStd = (2, 3, 4, 1, 2)
+
+ind = np.arange(N)  # the x locations for the groups
+width = 0.35       # the width of the bars
+
+fig, ax = plt.subplots()
+
+rects1 = ax.bar(ind, menMeans, width, color='r', yerr=menStd)
+
+womenMeans = (25, 32, 34, 20, 25)
+womenStd = (3, 5, 2, 3, 3)
+rects2 = ax.bar(ind + width, womenMeans, width, color='y', yerr=womenStd)
+
+# add some text for labels, title and axes ticks
+ax.set_ylabel('Scores')
+ax.set_title('Scores by group and gender')
+ax.set_xticks(ind + width)
+ax.set_xticklabels(('G1', 'G2', 'G3', 'G4', 'G5'))
+
+ax.legend((rects1[0], rects2[0]), ('Men', 'Women'))
+
+
+def autolabel(rects):
+    # attach some text labels
+    for rect in rects:
+        height = rect.get_height()
+        ax.text(rect.get_x() + rect.get_width()/2., 1.05*height,
+                '%d' % int(height),
+                ha='center', va='bottom')
+
+autolabel(rects1)
+autolabel(rects2)
+
+plt.ion()
+    # sets interactive mode. Prevents this message:
+    # QCoreApplication::exec: The event loop is already running
+plt.show()</t>
+<t tx="ekr.20160929143831.3"># http://matplotlib.org/1.5.1/examples/animation/animate_decay.html
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+
+@others
+
+# global data.
+fig, ax = plt.subplots()
+line, = ax.plot([], [], lw=2)
+ax.grid()
+xdata, ydata = [], []
+ani = animation.FuncAnimation(
+    fig, run, data_gen, blit=False, interval=10,
+    repeat=False, init_func=init)
+
+plt.ion()
+    # sets interactive mode. Prevents this message:
+    # QCoreApplication::exec: The event loop is already running
+plt.show()</t>
+<t tx="ekr.20160929143831.4">def data_gen(t=0):
+    cnt = 0
+    while cnt &lt; 1000:
+        cnt += 1
+        t += 0.1
+        yield t, np.sin(2*np.pi*t) * np.exp(-t/10.)
+</t>
+<t tx="ekr.20160929143831.5">def init():
+    ax.set_ylim(-1.1, 1.1)
+    ax.set_xlim(0, 10)
+    del xdata[:]
+    del ydata[:]
+    line.set_data(xdata, ydata)
+    return line,
+</t>
+<t tx="ekr.20160929143831.6">def run(data):
+    # update the data
+    t, y = data
+    xdata.append(t)
+    ydata.append(y)
+    xmin, xmax = ax.get_xlim()
+    if t &gt;= xmax:
+        ax.set_xlim(xmin, 2*xmax)
+        ax.figure.canvas.draw()
+    line.set_data(xdata, ydata)
+    return line,</t>
+<t tx="ekr.20160929143831.7"># http://matplotlib.org/1.5.1/examples/animation/basic_example.html
+if 0:
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import matplotlib.animation as animation
+
+@others
+
+if 0:
+    plt.ion()
+    # sets interactive mode. Prevents this message:
+    # QCoreApplication::exec: The event loop is already running
+plt.show()</t>
+<t tx="ekr.20160929143831.8">if 1:
+    
+    def update_line(num, data, line):
+        line.set_data(data[..., :num])
+        return line, # a tuple.
+
+    fig1 = plt.figure()
+    data = np.random.rand(2, 25)
+    l, = plt.plot([], [], 'r-')
+    plt.xlim(0, 1)
+    plt.ylim(0, 1)
+    plt.xlabel('x')
+    plt.title('test')
+    line_ani = animation.FuncAnimation(fig1, update_line, 25,
+        fargs=(data, l),
+        interval=50,
+        blit=True)
+</t>
+<t tx="ekr.20160929143831.9">fig2 = plt.figure()
+x = np.arange(-9, 10)
+y = np.arange(-9, 10).reshape(-1, 1)
+base = np.hypot(x, y)
+ims = []
+for add in np.arange(15):
+    ims.append((plt.pcolor(x, y, base + add, norm=plt.Normalize(0, 30)),))
+animation.ArtistAnimation(fig2, ims,
+    interval=50,
+    repeat_delay=3000,
+    blit=True)
+#im_ani.save('im.mp4', metadata={'artist':'Guido'})</t>
+<t tx="ekr.20160930062725.1">@language html
+
+&lt;!-- I use @int qweb_view_font_size = 30 --&gt;
+
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+
+&lt;script type="text/x-mathjax-config"&gt;
+  MathJax.Hub.Config({tex2jax: {inlineMath: [['$','$'], ['\\(','\\)']]}});
+&lt;/script&gt;
+
+&lt;!-- Both of these work... --&gt;
+
+&lt;script type="text/javascript" async
+  src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_CHTML"&gt;
+&lt;/script&gt;
+
+&lt;!-- &lt;script type="text/javascript" async --&gt;
+  &lt;!-- src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-MML-AM_CHTML"&gt; --&gt;
+&lt;!-- &lt;/script&gt; --&gt;
+
+&lt;/head&gt;
+
+&lt;body&gt;
+&lt;p&gt;&lt;mathjax&gt;
+
+&lt;h2&gt;Feed-forward Network Functions&lt;/h2&gt;
+We will consider a basic two layer nueral network model, i.e a model that maps inputs to a hidden layer and then to an output layer. We will make &lt;b&gt;the following 
+assumptions&lt;/b&gt;
+
+1. The final output will be a vector $Y$ with $K$ elements, $y_k$, where $y_k(\mathbf{x},\mathbf{w}) = p(C_1|\mathbf{x})$ is the probability that node $k$ is in class $C_1$ and $p(C_2|\mathbf{x}) = 1-p(C_1|\mathbf{x})$
+2. The activation function at a given layer is an arbitrary nonlinear function of a linear combination of the inputs and parameters for that layer
+3. The network is fully connected, i.e. every node at the input layer is connected to every node in the hidden layer and every node in the hidden layer is connected to every node in the output layer
+4. A bias parameter is included at the hidden and output layers
+
+Working from the input layer toward the output layer, we can build this model as follows:
+
+&lt;h3&gt;Input Layer&lt;/h3&gt;
+Assume we have an input vector $\mathbf{x} \in \Re^D$. Then the input layer consists of $D+1$ nodes where the value of the $i^{th}$ node for $i=0\ldots D$, is 0 if $i=0$ and $x_i$, i.e. the $i^{th}$ value of $\mathbf{x}$, otherwise.
+
+&lt;h3&gt;Hidden Layer&lt;/h3&gt;
+At the hidden layer we construct $M$ nodes where the value of $M$ depends on the specifics of the particular modelling problem. For each node, we define a *unit activation*, $a_m$, for $m=1\ldots M$ as &lt;br/&gt;
+$a_m = \sum_{i=0}^D w_{ji}^{(1)}x_i$ &lt;br/&gt;
+where the $(1)$ superscript indicates this weight is for the hidden layer. The output from each node, $z_m$, is then given by the value of a *fixed nonlinear function*, $h$, known as the *activation function*, acting on the unit activation&lt;br/&gt;
+$z_m = h(a_m) = h \left( \sum_{i=0}^D w_{mi}^{(1)}x_i \right)$&lt;br/&gt;
+Notice that $h$ is the same function for all nodes.
+&lt;h3&gt;Output Layer&lt;/h3&gt;
+The process at the output layer is essentially the same as at the hidden layer. We construct $K$ nodes, where again the value of $K$ depends on the specific modeling problem. For each node, we again define a *unit activation*, $a_k$, for $k=1 \ldots K$ by&lt;br/&gt;
+$a_k = \\sum_{m=0}^M w_{km}^{(2)} z_m$ &lt;br/&gt;
+We again apply a nonlinear activation function, say $y$, to produce the output&lt;br/&gt;
+$y_k = y(a_k)$
+
+Thus, the entire model can be summarized as a $K$ dimensional output vector $Y \in \Re^K$ where each element $y_k$ by&lt;br/&gt;
+$y_k(\mathbf{x},\mathbf{w}) = y \left( \sum_{m=0}^M w_{km}^{(2)} h \left( \sum_{i=0}^D w_{mi}^{(1)}x_i \right) \right)$
+
+&lt;h3&gt;Generalizations&lt;/h3&gt;
+There are a wide variety of generalizations possible for this model. Some of the more important ones for practical applications include
+
+* Addition of hidden layers
+* Inclusion of *skip-layer* connections, e.g. a connection from an input node directly to an output node
+* Sparse network, i.e. not a fully connected network
+
+&lt;!-- $$ --&gt;
+&lt;/mathjax&gt;&lt;/p&gt;
+&lt;/body&gt;&lt;/html&gt;</t>
+<t tx="ekr.20160930062850.1"></t>
+<t tx="ekr.20160930220214.2">@language md
+
+
+&lt;h2&gt;Feed-forward Network Functions&lt;/h2&gt;
+We will consider a basic two layer nueral network model, i.e a model that maps inputs to a hidden layer and then to an output layer. We will make **the following assumptions**
+
+1. The final output will be a vector $Y$ with $K$ elements, $y_k$, where $y_k(\mathbf{x},\mathbf{w}) = p(C_1|\mathbf{x})$ is the probability that node $k$ is in class $C_1$ and $p(C_2|\mathbf{x}) = 1-p(C_1|\mathbf{x})$
+2. The activation function at a given layer is an arbitrary nonlinear function of a linear combination of the inputs and parameters for that layer
+3. The network is fully connected, i.e. every node at the input layer is connected to every node in the hidden layer and every node in the hidden layer is connected to every node in the output layer
+4. A bias parameter is included at the hidden and output layers
+
+Working from the input layer toward the output layer, we can build this model as follows:
+
+&lt;h3&gt;Input Layer&lt;/h3&gt;
+Assume we have an input vector $\mathbf{x} \in \Re^D$. Then the input layer consists of $D+1$ nodes where the value of the $i^{th}$ node for $i=0\ldots D$, is 0 if $i=0$ and $x_i$, i.e. the $i^{th}$ value of $\mathbf{x}$, otherwise.
+
+&lt;h3&gt;Hidden Layer&lt;/h3&gt;
+At the hidden layer we construct $M$ nodes where the value of $M$ depends on the specifics of the particular modelling problem. For each node, we define a *unit activation*, $a_m$, for $m=1\ldots M$ as &lt;br/&gt;
+$a_m = \sum_{i=0}^D w_{ji}^{(1)}x_i$ &lt;br/&gt;
+where the $(1)$ superscript indicates this weight is for the hidden layer. The output from each node, $z_m$, is then given by the value of a *fixed nonlinear function*, $h$, known as the *activation function*, acting on the unit activation&lt;br/&gt;
+$z_m = h(a_m) = h \left( \sum_{i=0}^D w_{mi}^{(1)}x_i \right)$&lt;br/&gt;
+Notice that $h$ is the same function for all nodes.
+&lt;h3&gt;Output Layer&lt;/h3&gt;
+The process at the output layer is essentially the same as at the hidden layer. We construct $K$ nodes, where again the value of $K$ depends on the specific modeling problem. For each node, we again define a *unit activation*, $a_k$, for $k=1 \ldots K$ by&lt;br/&gt;
+$a_k = \sum_{m=0}^M w_{km}^{(2)} z_m$ &lt;br/&gt;
+We again apply a nonlinear activation function, say $y$, to produce the output&lt;br/&gt;
+$y_k = y(a_k)$
+
+Thus, the entire model can be summarized as a $K$ dimensional output vector $Y \in \Re^K$ where each element $y_k$ by&lt;br/&gt;
+$y_k(\mathbf{x},\mathbf{w}) = y \left( \sum_{m=0}^M w_{km}^{(2)} h \left( \sum_{i=0}^D w_{mi}^{(1)}x_i \right) \right)$
+
+&lt;h3&gt;Generalizations&lt;/h3&gt;
+There are a wide variety of generalizations possible for this model. Some of the more important ones for practical applications include
+
+* Addition of hidden layers
+* Inclusion of *skip-layer* connections, e.g. a connection from an input node directly to an output node
+* Sparse network, i.e. not a fully connected network</t>
+<t tx="ekr.20160930220358.1">@language html
+
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+&lt;title&gt;MathJax TeX Test Page&lt;/title&gt;
+&lt;script type="text/x-mathjax-config"&gt;
+  MathJax.Hub.Config({tex2jax: {inlineMath: [['$','$'], ['\\(','\\)']]}});
+&lt;/script&gt;
+&lt;script type="text/javascript" async
+  src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_CHTML"&gt;
+&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+When $a \ne 0$, there are two solutions to \(ax^2 + bx + c = 0\) and they are
+$$x = {-b \pm \sqrt{b^2-4ac} \over 2a}.$$
+&lt;/body&gt;
+&lt;/html&gt;
+</t>
+<t tx="ekr.20160930220426.1"></t>
+<t tx="ekr.20170709101639.1"># Test #516</t>
+<t tx="ekr.20171020112352.1"># http://matplotlib.org/1.5.1/examples/animation/animate_decay.html
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+
+@others
+
+# global data.
+fig, ax = plt.subplots()
+line, = ax.plot([], [], lw=2)
+ax.grid()
+xdata, ydata = [], []
+ani = animation.FuncAnimation(
+    fig, run, data_gen, blit=False, interval=10,
+    repeat=False, init_func=init)
+
+plt.ion()
+    # sets interactive mode. Prevents this message:
+    # QCoreApplication::exec: The event loop is already running
+plt.show()</t>
+<t tx="ekr.20171020112352.2">def data_gen(t=0):
+    cnt = 0
+    while cnt &lt; 1000:
+        cnt += 1
+        t += 0.1
+        yield t, np.sin(2*np.pi*t) * np.exp(-t/10.)
+</t>
+<t tx="ekr.20171020112352.3">def init():
+    ax.set_ylim(-1.1, 1.1)
+    ax.set_xlim(0, 10)
+    del xdata[:]
+    del ydata[:]
+    line.set_data(xdata, ydata)
+    return line,
+</t>
+<t tx="ekr.20171020112352.4">def run(data):
+    # update the data
+    t, y = data
+    xdata.append(t)
+    ydata.append(y)
+    xmin, xmax = ax.get_xlim()
+    if t &gt;= xmax:
+        ax.set_xlim(xmin, 2*xmax)
+        ax.figure.canvas.draw()
+    line.set_data(xdata, ydata)
+    return line,</t>
+<t tx="ekr.20171020112405.1"># http://matplotlib.org/1.5.1/examples/animation/basic_example.html
+if 0:
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import matplotlib.animation as animation
+
+@others
+
+if 0:
+    plt.ion()
+    # sets interactive mode. Prevents this message:
+    # QCoreApplication::exec: The event loop is already running
+plt.show()</t>
+<t tx="ekr.20171020112405.2">if 1:
+    
+    def update_line(num, data, line):
+        line.set_data(data[..., :num])
+        return line, # a tuple.
+
+    fig1 = plt.figure()
+    data = np.random.rand(2, 25)
+    l, = plt.plot([], [], 'r-')
+    plt.xlim(0, 1)
+    plt.ylim(0, 1)
+    plt.xlabel('x')
+    plt.title('test')
+    line_ani = animation.FuncAnimation(fig1, update_line, 25,
+        fargs=(data, l),
+        interval=50,
+        blit=True)
+</t>
+<t tx="ekr.20171020112405.3">fig2 = plt.figure()
+x = np.arange(-9, 10)
+y = np.arange(-9, 10).reshape(-1, 1)
+base = np.hypot(x, y)
+ims = []
+for add in np.arange(15):
+    ims.append((plt.pcolor(x, y, base + add, norm=plt.Normalize(0, 30)),))
+animation.ArtistAnimation(fig2, ims,
+    interval=50,
+    repeat_delay=3000,
+    blit=True)
+#im_ani.save('im.mp4', metadata={'artist':'Guido'})</t>
+<t tx="ekr.20171020112424.1">#!/usr/bin/env python
+# a bar plot with errorbars
+import numpy as np
+import matplotlib.pyplot as plt
+
+N = 5
+menMeans = (20, 35, 30, 35, 27)
+menStd = (2, 3, 4, 1, 2)
+
+ind = np.arange(N)  # the x locations for the groups
+width = 0.35       # the width of the bars
+
+fig, ax = plt.subplots()
+
+rects1 = ax.bar(ind, menMeans, width, color='r', yerr=menStd)
+
+womenMeans = (25, 32, 34, 20, 25)
+womenStd = (3, 5, 2, 3, 3)
+rects2 = ax.bar(ind + width, womenMeans, width, color='y', yerr=womenStd)
+
+# add some text for labels, title and axes ticks
+ax.set_ylabel('Scores')
+ax.set_title('Scores by group and gender')
+ax.set_xticks(ind + width)
+ax.set_xticklabels(('G1', 'G2', 'G3', 'G4', 'G5'))
+
+ax.legend((rects1[0], rects2[0]), ('Men', 'Women'))
+
+
+def autolabel(rects):
+    # attach some text labels
+    for rect in rects:
+        height = rect.get_height()
+        ax.text(rect.get_x() + rect.get_width()/2., 1.05*height,
+                '%d' % int(height),
+                ha='center', va='bottom')
+
+autolabel(rects1)
+autolabel(rects2)
+
+plt.ion()
+    # sets interactive mode. Prevents this message:
+    # QCoreApplication::exec: The event loop is already running
+plt.show()</t>
 </tnodes>
 </leo_file>

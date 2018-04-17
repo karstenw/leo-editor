@@ -1,70 +1,53 @@
 #@+leo-ver=5-thin
 #@+node:ekr.20090717092906.12765: * @file leoVersion.py
-'''A module holding version-related info.'''
-trace = False
-import os
-import json
+'''
+A module holding the following version-related info:
+
+leoVersion.branch:  The git branch name, or ''.
+leoVersion.build:   The timestamp field from commit_timestamp.json.
+leoVersion.date:    The asctime field from commit_timestamp.json.
+leoVersion.version: Leo's version number, set below.
+
+'''
+import leo.core.leoGlobals as g
 #@+<< version dates >>
 #@+node:ekr.20141117073519.12: ** << version dates >>
 #@@nocolor-node
 #@+at
-# Leo 4.5.1 final: September 14, 2008
-# Leo 4.6.1 final: July 30, 2009.
-# Leo 4.7.1 final: February 26, 2010.
-# Leo 4.8   final: November 26, 2010.
-# Leo 4.9   final: June 21, 2011.
-# Leo 4.10  final: March 29, 2012.
-# Leo 4.11 final: November 6, 2013.
-# Leo 5.0 final: November 24, 2014.
-# Leo 5.1 final: April 17, 2015.
-# Leo 5.2 final: March 18, 2016.
-# Leo 5.3 final: May 2, 2016.
+# 4.5.1:  September 14, 2008
+# 4.6.1:  July 30, 2009.
+# 4.7.1:  February 26, 2010.
+# 4.8:    November 26, 2010.
+# 4.9:    June 21, 2011.
+# 4.10:   March 29, 2012.
+# 4.11:   November 6, 2013.
+# 5.0:    November 24, 2014.
+# 5.1:    April 17, 2015.
+# 5.2:    March 18, 2016.
+# 5.3:    May 2, 2016.
+# 5.4:    October 22, 2016.
+# 5.5:    March 23, 2017.
+# 5.6:    September 27, 2017.
+# 5.7b1:  January 27, 2018.
+# 5.7b2:  February 12, 2018.
+# 5.7:    February 27, 2018.
+# 5.7.1:  April 6, 2018.
 #@-<< version dates >>
 #@+<< about install hooks >>
 #@+node:ekr.20150409201910.1: ** << about install hooks >>
 #@@nocolor-node
 #@+at
 # 
-# Developers should copy commit-msg & pre-commit from leo/extentions/hooks to
+# Developers should copy commit-msg & pre-commit from leo/extensions/hooks to
 # leo-editor/.git/hooks.
 # 
-# These hooks caise got to update commit_timestamp.json automatically.
+# These hooks cause Leo to update commit_timestamp.json automatically.
 # 
 # The install_hooks.py script copies these two files to leo-editor/.git/hooks.
 #@-<< about install hooks >>
-# get info from leo/core/commit_timestamp.json
-leo_core_path = os.path.dirname(os.path.realpath(__file__))
-    # leoVersion.py is in leo/core
-commit_path = os.path.join(leo_core_path, 'commit_timestamp.json')
-commit_info = json.load(open(commit_path))
-commit_timestamp = commit_info['timestamp']
-commit_asctime = commit_info['asctime']
-version = "5.4-devel" # Always used.
-# attempt to grab commit + branch info from git, else ignore it
-git_info = {}
-theDir = os.path.dirname(__file__)
-path = os.path.join(theDir, '..', '..', '.git', 'HEAD')
-if trace: print('leoVersion.py: %s exists: %s' % (path, os.path.exists(path)))
-if os.path.exists(path):
-    s = open(path, 'r').read()
-    if s.startswith('ref'):
-        # on a proper branch
-        pointer = s.split()[1]
-        dirs = pointer.split('/')
-        branch = dirs[-1]
-        path = os.path.join(theDir, '..', '..', '.git', pointer)
-        s = open(path, 'r').read().strip()[0: 12]
-            # shorten the hash to a unique shortname
-            # (12 characters should be enough until the end of time, for Leo...)
-        git_info['branch'] = branch
-        git_info['commit'] = s
-    else:
-        branch = 'None'
-        s = s[0: 12]
-        git_info['branch'] = branch
-        git_info['commit'] = s
-build = commit_timestamp
-date = commit_asctime
+version = "5.7.1"
+date, build = g.jsonCommitInfo()
+branch = g.gitBranchName()
 #@@language python
 #@@tabwidth -4
 #@-leo

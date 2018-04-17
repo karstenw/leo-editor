@@ -7,12 +7,8 @@
 Commands
 ========
 
-.. note::
+This plugin supports the following commands:
 
-    The last three commands, starting with `vs-eval`_, are a light weight
-    option for python calculations within Leo bodies.
-
-This plugin supports the following seven commands:
 
 vs-create-tree
 --------------
@@ -84,7 +80,7 @@ Pass 1 executes all the python statements between the *@x {* and the *@x }*
     @x }
 
 Pass 1 assigns the block of text to <var>. The type of value is SList,
-a special sublass of standard 'list' that makes operating with string
+a special subclass of standard 'list' that makes operating with string
 lists convenient. Notably, you can do <var>.n to get the content as plain
 string.
 
@@ -99,7 +95,7 @@ This assumes that <var> is a list, and appends the content as SList to this
 list. You will typically do '@x var = []' earlier in the document to make this
 construct work.
 
-<var> in all contructs above can be arbitrary expression that can be on left hand
+<var> in all constructs above can be arbitrary expression that can be on left hand
 side of assignment. E.g. you can use foo.bar, foo['bar'], foo().bar etc.
 
 Pass 2
@@ -114,43 +110,6 @@ Pass 2 evaluates *<expression>* and places the result in the body pane.
 
 **TODO**: discuss SList expressions.
 
-vs-eval
--------
-
-Execute the selected text, if any.  Select next line of text.
-
-Tries hard to capture the result of from the last expression in the
-selected text::
-
-    import datetime
-    today = datetime.date.today()
-
-will captue the value of ``today`` even though the last line is a
-statement, not an expression.
-
-Stores results in ``c.vs['_last']`` for insertion
-into body by ``vs-last`` or ``vs-last-pretty``.
-
-Removes common indentation (``textwrap.dedent()``) before executing,
-allowing execution of indented code.
-
-``g``, ``c``, and ``p`` are available to executing code, assignments
-are made in the ``c.vs`` namespace and persist for the life of ``c``.
-
-vs-last
--------
-
-Insert the last result from ``vs-eval``.  Inserted as a string,
-so ``"1\n2\n3\n4"`` will cover four lines and insert no quotes,
-for ``repr()`` style insertion use ``vs-last-pretty``.
-
-vs-last-pretty
---------------
-
-Insert the last result from ``vs-eval``.  Formatted by
-``pprint.pformat()``,  so ``"1\n2\n3\n4"`` will appear as
-'``"1\n2\n3\n4"``', see all ``vs-last``.
-
 Evaluating expressions
 ======================
 
@@ -163,7 +122,7 @@ different namespaces, while keeping namespaces generally separate.
 
 # SList docs: http://ipython.scipy.org/moin/Cookbook/StringListProcessing
 #@-<< docstring >>
-# By Ville M. Vainio.
+# By Ville M. Vainio and Terry N. Brown.
 
 #@+<< imports >>
 #@+node:ville.20110403115003.10351: ** << imports >>
@@ -175,9 +134,6 @@ from leo.external.stringlist import SList
 import pprint
 import os
 import re
-# import sys
-# import types
-import textwrap
 import json
 from io import BytesIO
 try:
@@ -192,11 +148,10 @@ controllers = {}
 # Eval is essential to this plugin.
 
 #@+others
-#@+node:ekr.20110408065137.14221: ** Module level
+#@+node:ekr.20110408065137.14221: ** Top level
 #@+node:ville.20110403115003.10353: *3* colorize_headlines_visitor
 def colorize_headlines_visitor(c,p, item):
     """ Changes @thin, @auto, @shadow to bold """
-
     if p.h.startswith("!= "):
         f = item.font(0)
         f.setBold(True)
@@ -207,7 +162,6 @@ def init ():
     '''Return True if the plugin has loaded successfully.'''
     # vs_reset(None)
     global controllers
-    # g.vs = {} # A dictionary of dictionaries, one for each commander.
     # create global valuaspace controller for ipython
     g.visit_tree_item.add(colorize_headlines_visitor)
     g.registerHandler('after-create-leo-frame',onCreate)
@@ -217,9 +171,7 @@ def init ():
 def onCreate (tag,key):
 
     global controllers
-
     c = key.get('c')
-
     if c:
         h = c.hash()
         vc = controllers.get(h)
@@ -237,169 +189,28 @@ def get_vs(c):
         vsc.set_c(c)
         return vsc
     return controllers[c.hash()]
-#@+node:ville.20110407210441.5691: *3* vs-create-tree
+#@+node:ekr.20180328055151.1: *3* Ville's original commands
+#@+node:ville.20110407210441.5691: *4* vs-create-tree
 @g.command('vs-create-tree')
 def vs_create_tree(event):
     """Create tree from all variables."""
     get_vs(event['c']).create_tree()
 
-#@+node:ekr.20110408065137.14227: *3* vs-dump
+#@+node:ekr.20110408065137.14227: *4* vs-dump
 @g.command('vs-dump')
 def vs_dump(event):
     """Dump the valuespace for this commander."""
     get_vs(event['c']).dump()
-#@+node:ekr.20110408065137.14220: *3* vs-reset
+#@+node:ekr.20110408065137.14220: *4* vs-reset
 @g.command('vs-reset')
 def vs_reset(event):
 
-    # g.vs = types.ModuleType('vs')
-    # sys.modules['vs'] = g.vs
     get_vs(event['c']).reset()
-#@+node:ville.20110403115003.10356: *3* vs-update
+#@+node:ville.20110403115003.10356: *4* vs-update
 @g.command('vs-update')
 def vs_update(event):
 
     get_vs(event['c']).update()
-#@+node:tbrown.20130227164110.21222: *3* vs-eval
-@g.command("vs-eval")
-def vs_eval(event):
-    """
-    Execute the selected text, if any.  Select next line of text.
-
-    Tries hard to capture the result of from the last expression in the
-    selected text::
-
-        import datetime
-        today = datetime.date.today()
-
-    will captue the value of ``today`` even though the last line is a
-    statement, not an expression.
-
-    Stores results in ``c.vs['_last']`` for insertion
-    into body by ``vs-last`` or ``vs-last-pretty``.
-
-    Removes common indentation (``textwrap.dedent()``) before executing,
-    allowing execution of indented code.
-
-    ``g``, ``c``, and ``p`` are available to executing code, assignments
-    are made in the ``c.vs`` namespace and persist for the life of ``c``.
-    """
-    c = event['c']
-    w = c.frame.body.wrapper
-    txt = w.getSelectedText()
-    # select next line ready for next select/send cycle
-    # copied from .../plugins/leoscreen.py
-    b = w.getAllText()
-    i = w.getInsertPoint()
-    try:
-        j = b[i:].index('\n')+i+1
-        w.setSelectionRange(i,j)
-    except ValueError:  # no more \n in text
-        w.setSelectionRange(i,i)
-
-    eval_text(c, txt)
-
-def eval_text(c, txt):
-
-    if not txt:
-        return
-
-    vsc = get_vs(c)
-    cvs = vsc.d
-
-    txt = textwrap.dedent(txt)
-    blocks = re.split('\n(?=[^\\s])', txt)
-    leo_globals = {'c':c, 'p':c.p, 'g':g}
-    ans = None
-    dbg = False
-    redirects = c.config.getBool('valuespace_vs_eval_redirect')
-    if redirects:
-        old_stderr = g.stdErrIsRedirected()
-        old_stdout = g.stdOutIsRedirected()
-        if not old_stderr:
-            g.redirectStderr()
-        if not old_stdout:
-            g.redirectStdout()
-    try:
-        # execute all but the last 'block'
-        if dbg: print('all but last')
-        # exec '\n'.join(blocks[:-1]) in leo_globals, c.vs
-        exec('\n'.join(blocks[:-1]), leo_globals, cvs) # Compatible with Python 3.x.
-        all_done = False
-    except SyntaxError:
-        # splitting of the last block caused syntax error
-        try:
-            # is the whole thing a single expression?
-            if dbg: print('one expression')
-            ans = eval(txt, leo_globals, cvs)
-        except SyntaxError:
-            if dbg: print('statement block')
-            # exec txt in leo_globals, c.vs
-            exec(txt, leo_globals, cvs) # Compatible with Python 3.x.
-        all_done = True  # either way, the last block is used now
-    if not all_done:  # last block still needs using
-        try:
-            if dbg: print('final expression')
-            ans = eval(blocks[-1], leo_globals, cvs)
-        except SyntaxError:
-            ans = None
-            if dbg: print('final statement')
-            # exec blocks[-1] in leo_globals, c.vs
-            exec(blocks[-1], leo_globals, cvs) # Compatible with Python 3.x.
-    if redirects:
-        if not old_stderr:
-            g.restoreStderr()
-        if not old_stdout:
-            g.restoreStdout()
-    if ans is None:  # see if last block was a simple "var =" assignment
-        key = blocks[-1].split('=', 1)[0].strip()
-        if key in cvs:
-            ans = cvs[key]
-    if ans is None:  # see if whole text was a simple /multi-line/ "var =" assignment
-        key = blocks[0].split('=', 1)[0].strip()
-        if key in cvs:
-            ans = cvs[key]
-    cvs['_last'] = ans
-    if ans is not None:
-        # annoying to echo 'None' to the log during line by line execution
-        txt = str(ans)
-        lines = txt.split('\n')
-        if len(lines) > 10:
-            txt = '\n'.join(lines[:5]+['<snip>']+lines[-5:])
-        if len(txt) > 500:
-            txt = txt[:500] + ' <truncated>'
-        g.es(txt)
-
-    return ans
-
-#@+node:tbrown.20130227164110.21223: *3* vs-last
-@g.command("vs-last")
-def vs_last(event, text=None):
-    """
-    Insert the last result from ``vs-eval``.
-
-    Inserted as a string, so ``"1\n2\n3\n4"`` will cover four lines and
-    insert no quotes, for ``repr()`` style insertion use ``vs-last-pretty``.
-    """
-    c = event['c']
-    if text is None:
-        text = str(get_vs(c).d.get('_last'))
-    editor = c.frame.body.wrapper
-    insert_point = editor.getInsertPoint()
-    editor.insert(insert_point, text+'\n')
-    editor.setInsertPoint(insert_point+len(text)+1)
-    c.setChanged(True)
-#@+node:tbrown.20130227164110.21224: *3* vs-last-pretty
-@g.command("vs-last-pretty")
-def vs_last_pretty(event):
-    """
-    Insert the last result from ``vs-eval``.
-
-    Formatted by ``pprint.pformat()``, so ``"1\n2\n3\n4"`` will appear as
-    '``"1\n2\n3\n4"``', see all ``vs-last``.
-    """
-    c = event['c']
-    vs_last(event, text=pprint.pformat(get_vs(c).d.get('_last')))
 #@+node:ekr.20110408065137.14219: ** class ValueSpaceController
 class ValueSpaceController(object):
 
@@ -409,27 +220,16 @@ class ValueSpaceController(object):
 
     #@+others
     #@+node:ekr.20110408065137.14223: *3*  ctor
-    def __init__ (self,c = None, ns = None ):
-
+    def __init__(self, c=None, ns=None):
         # g.trace('(ValueSpaceController)',c)
-
         self.c = c
-        if ns is None:
-            self.d = {}
-        else:
-            self.d = ns
-
-        self.reset()
+        self.d = {} if ns is None else ns
         self.trace = False
         self.verbose = False
-
+        self.reset()
         if c:
-            # important this come after self.reset()
+            # This must come after self.reset()
             c.keyHandler.autoCompleter.namespaces.append(self.d)
-
-        # changed g.vs.__dict__ to self.d
-        # Not strictly necessary, but allows cross-commander communication.
-        #g.vs [c.hash()] = self.d
     #@+node:ekr.20110408065137.14224: *3* create_tree
     def create_tree (self):
 

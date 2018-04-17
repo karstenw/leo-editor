@@ -27,6 +27,7 @@ from leo.core import leoPlugins
     # Uses leoPlugins.TryNext
 
 if isPython3:
+    # pylint: disable=no-name-in-module
     import html.parser as HTMLParser
 else:
     import HTMLParser
@@ -50,12 +51,12 @@ def onCreate (tag, keys):
 #@+node:ville.20090503124249.7: ** the code
 class MLStripper(HTMLParser.HTMLParser):
     # pylint: disable=super-init-not-called
-    # Apparently not needed.
+    # pylint: disable=abstract-method
     def __init__(self):
         self.reset()
         self.fed = []
-    def handle_data(self, d):
-        self.fed.append(d)
+    def handle_data(self, data):
+        self.fed.append(data)
     def get_fed_data(self):
         return ''.join(self.fed)
 
@@ -119,7 +120,7 @@ def tomboy_act_on_node(c,p,event):
         raise leoPlugins.TryNext
 
     capturenotes(c,p)
-    c.redraw_now()
+    c.redraw()
 
 def tomboy_install():
     g.act_on_node.add(tomboy_act_on_node, 99)

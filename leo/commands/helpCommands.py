@@ -1105,6 +1105,35 @@ class HelpCommandsClass(BaseEditCommandsClass):
         '''
         #@-<< define s >>
         self.c.putHelpFor(s)
+    #@+node:ekr.20170823084423.1: *3* helpForSettings
+    @cmd('help-for-settings')
+    def helpForSettings(self, event=None):
+        '''Prints a discussion of of Leo's find commands.'''
+        #@+<< define s >>
+        #@+node:ekr.20170823084456.1: *4* << define s >> (helpForSettings)
+        #@@language rest
+
+        # Using raw string is essential.
+
+        s = r'''
+
+        About settings
+        ---------------
+
+        **@settings trees** specify settings. The headline of each node indicates
+        its type. The body text of most nodes contain comments. However, the body
+        text of \@data, \@font, \@item and \@shortcuts nodes may contain data. For
+        more information about the format of \@settings trees, see leoSettings.leo.
+
+        leoSettings.leo is Leo's main settings file. myLeoSettings.leo contains
+        your personal settings. Settings in myLeoSettings.leo override the settings
+        in leoSettings.leo. Put myLeoSettigns.leo in your home `~` directory or in
+        the `~/.leo` directory. Any other .leo file may contain an \@settings tree.
+        Such settings apply only to that file.
+
+        '''
+        #@-<< define s >>
+        self.c.putHelpFor(s)
     #@+node:ekr.20150514063305.402: *3* printSettings
     @cmd('print-settings')
     def printSettings(self, event=None):
@@ -1114,6 +1143,7 @@ class HelpCommandsClass(BaseEditCommandsClass):
         from:
 
         -     leoSettings.leo,
+        -  @  @button, @command, @mode.
         - [D] default settings.
         - [F] indicates the file being loaded,
         - [M] myLeoSettings.leo,
@@ -1124,28 +1154,27 @@ class HelpCommandsClass(BaseEditCommandsClass):
     def pythonHelp(self, event=None):
         '''Prompt for a arg for Python's help function, and put it to the log pane.'''
         c, k = self.c, self.c.k
-        tag = 'python-help'
-        state = k.getState(tag)
-        if state == 0:
-            c.minibufferWantsFocus()
-            k.setLabelBlue('Python help: ')
-            k.getArg(event, tag, 1, self.pythonHelp)
-        else:
-            k.clearState()
-            k.resetLabel()
-            s = k.arg.strip()
-            if s:
-                # Capture the output of Python's help command.
-                old = sys.stdout
-                try:
-                    sys.stdout = stdout = g.FileLikeObject()
-                    help(str(s))
-                    s2 = stdout.read()
-                finally:
-                    sys.stdout = old
-                # Send it to the vr pane as a <pre> block
-                s2 = '<pre>' + s2 + '</pre>'
-                c.putHelpFor(s2)
+        c.minibufferWantsFocus()
+        k.setLabelBlue('Python help: ')
+        k.get1Arg(event, handler=self.pythonHelp1)
+
+    def pythonHelp1(self, event):
+        c, k = self.c, self.c.k
+        k.clearState()
+        k.resetLabel()
+        s = k.arg.strip()
+        if s:
+            # Capture the output of Python's help command.
+            old = sys.stdout
+            try:
+                sys.stdout = stdout = g.FileLikeObject()
+                help(str(s))
+                s2 = stdout.read()
+            finally:
+                sys.stdout = old
+            # Send it to the vr pane as a <pre> block
+            s2 = '<pre>' + s2 + '</pre>'
+            c.putHelpFor(s2)
     #@-others
 #@-others
 #@-leo

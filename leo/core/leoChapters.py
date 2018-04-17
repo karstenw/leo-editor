@@ -28,6 +28,10 @@ class ChapterController(object):
             # True: cc.selectChapterForPosition does nothing.
             # Note: Used in qt_frame.py.
         self.tt = None # May be set in finishCreate.
+        self.reloadSettings()
+        
+    def reloadSettings(self):
+        c = self.c
         self.use_tabs = c.config.getBool('use_chapter_tabs')
     #@+node:ekr.20160402024827.1: *4* cc.createIcon
     def createIcon(self):
@@ -43,8 +47,8 @@ class ChapterController(object):
 
     def finishCreate(self):
         '''Create the box in the icon area.'''
-        trace = (False or g.trace_startup) and not g.unitTesting
-        if trace: g.es_debug('(cc)')
+        trace = False and not g.unitTesting
+        if trace: g.trace('(cc)')
         cc = self
         cc.createIcon()
         if trace: g.trace('===== ChapterController.finishCreate')
@@ -61,16 +65,16 @@ class ChapterController(object):
         trace = False and not g.unitTesting
         trace_redef = True
         c, cc = self.c, self
-        command = 'chapter-select-%s' % chapterName
+        commandName = 'chapter-select-%s' % chapterName
         inverseBindingsDict = c.k.computeInverseBindingDict()
-        if command in c.commandsDict:
+        if commandName in c.commandsDict:
             if trace and trace_redef:
-                g.trace('===== already defined', command)
-                g.trace('inverse', inverseBindingsDict.get(command))
+                g.trace('===== already defined', commandName)
+                g.trace('inverse', inverseBindingsDict.get(commandName))
             return
         if trace:
-            g.trace('===== defining', command, binding, g.callers(1))
-            g.trace('inverse', inverseBindingsDict.get(command))
+            g.trace('===== defining', commandName, binding, g.callers(1))
+            g.trace('inverse', inverseBindingsDict.get(commandName))
 
         def select_chapter_callback(event,cc=cc,name=chapterName):
             chapter = cc.chaptersDict.get(name)
@@ -89,12 +93,7 @@ class ChapterController(object):
         # This will create the command bound to any existing settings.
         bindings = (None, binding) if binding else (None,)
         for shortcut in bindings:
-            c.k.registerCommand(
-                command,
-                func=select_chapter_callback,
-                pane='all',
-                shortcut=shortcut,
-                verbose=False)
+            c.k.registerCommand(commandName, select_chapter_callback, shortcut=shortcut)
     #@+node:ekr.20150509030349.1: *3* cc.cmd (decorator)
     def cmd(name):
         '''Command decorator for the ChapterController class.'''
@@ -103,20 +102,37 @@ class ChapterController(object):
     #@+node:ekr.20070604165126: *3* cc.selectChapter
     @cmd('chapter-select')
     def selectChapter(self, event=None):
-        '''Use the minibuffer to get a chapter name,
-        then create the chapter.'''
-        cc, k, tag = self, self.c.k, 'select-chapter'
-        state = k.getState(tag)
-        if state == 0:
-            names = cc.setAllChapterNames()
-            g.es('Chapters:\n' + '\n'.join(names))
-            k.setLabelBlue('Select chapter: ')
-            k.getArg(event, tag, 1, self.selectChapter, tabList=names)
-        else:
-            k.clearState()
-            k.resetLabel()
-            if k.arg:
-                cc.selectChapterByName(k.arg)
+        '''Use the minibuffer to get a chapter name, then create the chapter.'''
+        cc, k = self, self.c.k
+        names = cc.setAllChapterNames()
+        g.es('Chapters:\n' + '\n'.join(names))
+        k.setLabelBlue('Select chapter: ')
+        k.get1Arg(event, handler=self.selectChapter1, tabList=names)
+
+    def selectChapter1(self, event):
+        cc, k = self, self.c.k
+        k.clearState()
+        k.resetLabel()
+        if k.arg:
+            cc.selectChapterByName(k.arg)
+    #@+node:ekr.20170202061705.1: *3* cc.selectNext/Back
+    @cmd('chapter-back')
+    def backChapter(self, event=None):
+        cc = self
+        names = sorted(cc.setAllChapterNames())
+        sel_name = cc.selectedChapter.name if cc.selectedChapter else 'main'
+        i = names.index(sel_name)
+        new_name = names[i-1 if i > 0 else len(names)-1]
+        cc.selectChapterByName(new_name)
+
+    @cmd('chapter-next')
+    def nextChapter(self, event=None):
+        cc = self
+        names = sorted(cc.setAllChapterNames())
+        sel_name = cc.selectedChapter.name if cc.selectedChapter else 'main'
+        i = names.index(sel_name)
+        new_name = names[i+1 if i+1 < len(names) else 0]
+        cc.selectChapterByName(new_name)
     #@+node:ekr.20070317130250: *3* cc.selectChapterByName & helper
     def selectChapterByName(self, name, collapse=True):
         '''Select a chapter.  Return True if a redraw is needed.'''
@@ -126,7 +142,7 @@ class ChapterController(object):
             if trace: g.trace('lockout', g.callers())
             return
         if g.isInt(name):
-            return cc.note('PyQt5 chapaters not supported')
+            return cc.note('PyQt5 chapters not supported')
         chapter = cc.getChapter(name)
         if not chapter:
             g.es_print('no such @chapter node: %s' % name)
@@ -283,7 +299,7 @@ class ChapterController(object):
 
         Note: this code calls c.redraw() if the chapter changes.
         '''
-        trace = (False or g.app.debug) and not g.unitTesting
+        trace = False and not g.unitTesting
         c, cc = self.c, self
         # New in Leo 4.11
         if cc.selectChapterLockout:
@@ -328,30 +344,26 @@ class ChapterController(object):
             cc.selectChapterByName('main')
         # Fix bug 869385: Chapters make the nav_qt.py plugin useless
         assert not self.selectChapterLockout
-        c.redraw_now()
+        # New in Leo 5.6: don't call c.redraw immediately.
+        c.redraw_later()
     #@+node:ekr.20130915052002.11289: *4* cc.setAllChapterNames
     def setAllChapterNames(self):
         '''Called early and often to discover all chapter names.'''
-        c, cc, result = self.c, self, []
-        sel_name = cc.selectedChapter and cc.selectedChapter.name or 'main'
-        seen = set()
+        c, cc = self.c, self
+        # sel_name = cc.selectedChapter and cc.selectedChapter.name or 'main'
         if 'main' not in cc.chaptersDict:
             cc.chaptersDict['main'] = Chapter(c, cc, 'main')
             cc.makeCommand('main')
                 # This binds any existing bindings to chapter-select-main.
+        result, seen = ['main'], set()
         for p in c.all_unique_positions():
             chapterName, binding = self.parseHeadline(p)
             if chapterName and p.v not in seen:
                 seen.add(p.v)
-                if chapterName != sel_name:
-                    result.append(chapterName)
+                result.append(chapterName)
                 if chapterName not in cc.chaptersDict:
                     cc.chaptersDict[chapterName] = Chapter(c, cc, chapterName)
                     cc.makeCommand(chapterName, binding)
-        if 'main' not in result and sel_name != 'main':
-            result.append('main')
-        result.sort()
-        result.insert(0, sel_name)
         return result
     #@-others
 #@+node:ekr.20070317085708: ** class Chapter

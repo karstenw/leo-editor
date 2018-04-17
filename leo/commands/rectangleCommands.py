@@ -30,7 +30,7 @@ class RectangleCommandsClass(BaseEditCommandsClass):
         'd': ('delete-rectangle', self.deleteRectangle),
         'k': ('kill-rectangle', self.killRectangle),
         'o': ('open-rectangle', self.openRectangle),
-        'r': ('copy-rectangle-to-register', self.copyRectangleToRegister),
+        # 'r': ('copy-rectangle-to-register', self.copyRectangleToRegister),
         't': ('string-rectangle', self.stringRectangle),
         'y': ('yank-rectangle', self.yankRectangle),
         }
@@ -78,10 +78,10 @@ class RectangleCommandsClass(BaseEditCommandsClass):
         j = '%s.%s' % (r3, r2)
         w.setSelectionRange(i, j, insert=j)
         self.endCommand()
-    #@+node:ekr.20150515060613.1: *4* copyRectangleToRegister
-    @cmd('rectangle-copy-to-register')
-    def copyRectangleToRegister(self, event):
-        self.c.registerCommands.copyRectangleToRegister(event)
+    #@+node:ekr.20150515060613.1: *4* copyRectangleToRegister (no longer used)
+    # @cmd('rectangle-copy-to-register')
+    # def copyRectangleToRegister(self, event):
+        # self.c.registerCommands.copyRectangleToRegister(event)
     #@+node:ekr.20150514063305.456: *4* deleteRectangle
     @cmd('rectangle-delete')
     def deleteRectangle(self, event):
@@ -142,40 +142,41 @@ class RectangleCommandsClass(BaseEditCommandsClass):
         Prompt for a string, then replace the contents of a rectangle
         with a string on each line.
         '''
-        c, k = self.c, self.c.k
-        state = k.getState('string-rect')
+        k = self.c.k
         if g.app.unitTesting:
-            state = 1
             k.arg = 's...s' # This string is known to the unit test.
-            w = self.editWidget(event)
-            self.stringRect = self.getRectanglePoints(w)
-        if state == 0:
+            self.w = self.editWidget(event)
+            self.stringRect = self.getRectanglePoints(self.w)
+            self.stringRectangle1(event)
+        else:
             self.w = self.editWidget(event)
             if self.w and self.check(event):
                 self.stringRect = self.getRectanglePoints(self.w)
                 k.setLabelBlue('String rectangle: ')
-                k.getArg(event, 'string-rect', 1, self.stringRectangle)
-        else:
-            k.clearState()
-            k.resetLabel()
-            c.bodyWantsFocus()
-            w = self.w
-            self.beginCommand(w, 'string-rectangle')
-            # pylint: disable=unpacking-non-sequence
-            r1, r2, r3, r4 = self.stringRect
-            s = w.getAllText()
-            for r in range(r1, r3 + 1):
-                i = g.convertRowColToPythonIndex(s, r - 1, r2)
-                j = g.convertRowColToPythonIndex(s, r - 1, r4)
-                s = s[: i] + k.arg + s[j:]
-            w.setAllText(s)
-            i = g.convertRowColToPythonIndex(s, r1 - 1, r2)
-            j = g.convertRowColToPythonIndex(s, r3 - 1, r2 + len(k.arg))
-            w.setSelectionRange(i, j)
-            self.endCommand()
-            # 2010/1/1: Fix bug 480422:
-            # string-rectangle kills syntax highlighting.
-            c.frame.body.recolor(c.p, incremental=False)
+                k.get1Arg(event, handler=self.stringRectangle1)
+
+    def stringRectangle1(self, event):
+        c, k = self.c, self.c.k
+        k.clearState()
+        k.resetLabel()
+        c.bodyWantsFocus()
+        w = self.w
+        self.beginCommand(w, 'string-rectangle')
+        # pylint: disable=unpacking-non-sequence
+        r1, r2, r3, r4 = self.stringRect
+        s = w.getAllText()
+        for r in range(r1, r3 + 1):
+            i = g.convertRowColToPythonIndex(s, r - 1, r2)
+            j = g.convertRowColToPythonIndex(s, r - 1, r4)
+            s = s[: i] + k.arg + s[j:]
+        w.setAllText(s)
+        i = g.convertRowColToPythonIndex(s, r1 - 1, r2)
+        j = g.convertRowColToPythonIndex(s, r3 - 1, r2 + len(k.arg))
+        w.setSelectionRange(i, j)
+        self.endCommand()
+        # 2010/1/1: Fix bug 480422:
+        # string-rectangle kills syntax highlighting.
+        c.frame.body.recolor(c.p)
     #@+node:ekr.20150514063305.460: *4* yankRectangle
     @cmd('rectangle-yank')
     def yankRectangle(self, event, killRect=None):

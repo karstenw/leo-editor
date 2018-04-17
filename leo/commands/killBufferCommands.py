@@ -18,19 +18,25 @@ def cmd(name):
 class KillBufferCommandsClass(BaseEditCommandsClass):
     '''A class to manage the kill buffer.'''
     #@+others
-    #@+node:ekr.20150514063305.409: *3* kill.ctor
+    #@+node:ekr.20150514063305.409: *3* kill.ctor & reloadSettings
     def __init__(self, c):
         '''Ctor for KillBufferCommandsClass class.'''
         # pylint: disable=super-init-not-called
         self.c = c
-        self.addWsToKillRing = c.config.getBool('add-ws-to-kill-ring')
         self.kbiterator = self.iterateKillBuffer()
-        self.last_clipboard = None # For interacting with system clipboard.
+        self.last_clipboard = None
+            # For interacting with system clipboard.
         self.lastYankP = None
             # Position of the last item returned by iterateKillBuffer.
         self.reset = None
             # The index of the next item to be returned in
             # g.app.globalKillBuffer by iterateKillBuffer.
+        self.reloadSettings()
+            
+    def reloadSettings(self):
+        '''KillBufferCommandsClass.reloadSettings.'''
+        c = self.c
+        self.addWsToKillRing = c.config.getBool('add-ws-to-kill-ring')
     #@+node:ekr.20150514063305.411: *3* addToKillBuffer
     def addToKillBuffer(self, text):
         '''
@@ -57,7 +63,6 @@ class KillBufferCommandsClass(BaseEditCommandsClass):
         self.beginCommand(w, undoType=undoType)
         i2 = s.rfind('.', 0, i) + 1
         self.kill(event, i2, i + 1, undoType=undoType)
-        self.c.frame.body.forceFullRecolor()
         w.setInsertPoint(i2)
         self.endCommand(changed=True, setLabel=True)
     #@+node:ekr.20150514063305.413: *3* backwardKillWord & killWord
@@ -88,7 +93,6 @@ class KillBufferCommandsClass(BaseEditCommandsClass):
             e.extendToWord(event)
             i, j = w.getSelectionRange()
             self.kill(event, i, j, undoType=None)
-            c.frame.body.forceFullRecolor()
             self.endCommand(changed=True, setLabel=True)
     #@+node:ekr.20150514063305.414: *3* clearKillRing
     @cmd('clear-kill-ring')
@@ -164,7 +168,6 @@ class KillBufferCommandsClass(BaseEditCommandsClass):
         w.delete(frm, to)
         w.setInsertPoint(frm)
         if undoType:
-            self.c.frame.body.forceFullRecolor()
             self.endCommand(changed=True, setLabel=True)
     #@+node:ekr.20150514063305.420: *3* killToEndOfLine
     @cmd('kill-to-end-of-line')
@@ -228,7 +231,6 @@ class KillBufferCommandsClass(BaseEditCommandsClass):
         if deleteFlag:
             self.beginCommand(w, undoType='kill-region')
             w.delete(i, j)
-            self.c.frame.body.forceFullRecolor()
             self.endCommand(changed=True, setLabel=True)
         self.addToKillBuffer(s)
         g.app.gui.replaceClipboardWith(s)
@@ -249,7 +251,6 @@ class KillBufferCommandsClass(BaseEditCommandsClass):
         self.beginCommand(w, undoType=undoType)
         i2 = s.rfind('.', 0, ins) + 1
         self.kill(event, i2, i + 1, undoType=undoType)
-        self.c.frame.body.forceFullRecolor()
         w.setInsertPoint(i2)
         self.endCommand(changed=True, setLabel=True)
     #@+node:ekr.20150514063305.424: *3* killWs
@@ -314,7 +315,6 @@ class KillBufferCommandsClass(BaseEditCommandsClass):
             # w.setSelectionRange(i,i+len(s),insert=i+len(s))
             w.setInsertPoint(i + len(s))
             self.lastYankP = current.copy()
-            c.frame.body.forceFullRecolor()
         finally:
             self.endCommand(changed=True, setLabel=True)
     #@+node:ekr.20150514063305.426: *3* yankPop
@@ -335,7 +335,7 @@ class KillBufferCommandsClass(BaseEditCommandsClass):
             k.setLabelBlue('Zap To Character: ')
             k.setState('zap-to-char', 1, handler=self.zapToCharacter)
         else:
-            ch = event and event.char or ' '
+            ch = event.char if event else ' '
             k.resetLabel()
             k.clearState()
             s = w.getAllText()

@@ -40,7 +40,7 @@ import unittest
 class ShadowController(object):
     '''A class to manage @shadow files'''
     #@+others
-    #@+node:ekr.20080708094444.79: *3*  x.ctor
+    #@+node:ekr.20080708094444.79: *3*  x.ctor & x.reloadSettings
     def __init__(self, c, trace=False, trace_writers=False):
         '''Ctor for ShadowController class.'''
         self.c = c
@@ -53,17 +53,26 @@ class ShadowController(object):
         }
         # File encoding.
         self.encoding = c.config.default_derived_file_encoding
-        # Configuration...
-        self.shadow_subdir = c.config.getString('shadow_subdir') or '.leo_shadow'
-        self.shadow_prefix = c.config.getString('shadow_prefix') or ''
-        self.shadow_in_home_dir = c.config.getBool('shadow_in_home_dir', default=False)
-        self.shadow_subdir = g.os_path_normpath(self.shadow_subdir)
+        # Configuration: set in reloadSettings.
+        self.shadow_subdir = None
+        self.shadow_prefix = None
+        self.shadow_in_home_dir = None
+        self.shadow_subdir = None
         # Error handling...
         self.errors = 0
         self.last_error = '' # The last error message, regardless of whether it was actually shown.
         self.trace = False
         # Support for goto-line.
         self.line_mapping = []
+        self.reloadSettings()
+        
+    def reloadSettings(self):
+        '''ShadowController.reloadSettings.'''
+        c = self.c
+        self.shadow_subdir = c.config.getString('shadow_subdir') or '.leo_shadow'
+        self.shadow_prefix = c.config.getString('shadow_prefix') or ''
+        self.shadow_in_home_dir = c.config.getBool('shadow_in_home_dir', default=False)
+        self.shadow_subdir = g.os_path_normpath(self.shadow_subdir)
     #@+node:ekr.20080711063656.1: *3* x.File utils
     #@+node:ekr.20080711063656.7: *4* x.baseDirName
     def baseDirName(self):
@@ -106,7 +115,9 @@ class ShadowController(object):
 
         Return True if theFile was changed.
         '''
-        trace = False and not g.unitTesting; verbose = False
+        trace = False and not g.unitTesting
+        verbose = False
+        c = self.c
         x = self
         exists = g.os_path_exists(fn)
         if exists:
@@ -115,7 +126,9 @@ class ShadowController(object):
             if s2 is None:
                 return False
             if s == s2:
-                if not g.unitTesting: g.es('unchanged:', fn)
+                report = c.config.getBool('report_unchanged_files', default=True)
+                if report and not g.unitTesting:
+                    g.es('unchanged:', fn)
                 return False
         # Issue warning if directory does not exist.
         theDir = g.os_path_dirname(fn)
@@ -411,11 +424,9 @@ class ShadowController(object):
             g.trace(
                 'marker', marker,
                 '\npublic_file', old_public_file,
-                '\npublic lines...\n%s' % (
-                    g.listToString(old_public_lines, toRepr=True)),
+                '\npublic lines...\n%s' % g.listToString(old_public_lines),
                 '\nprivate_file', old_private_file,
-                '\nprivate lines...\n%s\n' % (
-                    g.listToString(old_private_lines, toRepr=True)))
+                '\nprivate lines...\n%s\n' % g.listToString(old_private_lines))
         new_private_lines = x.propagate_changed_lines(
             old_public_lines, old_private_lines, marker)
         # Important bug fix: Never create the private file here!
@@ -626,12 +637,7 @@ class ShadowController(object):
             # but we *do* want sentinels elsewhere.
             at.at_shadow_test_hack = True
             try:
-                at.write(p,
-                    nosentinels=False,
-                    thinFile=False, # Debatable.
-                    scriptWrite=False,
-                        # 2015/06/23: Was True, which is inaccurate and unnecessary.
-                    toString=True)
+                at.write(p, nosentinels=False, toString=True)
             finally:
                 at.at_shadow_test_hack = False
             s = at.stringOutput
@@ -694,7 +700,7 @@ class ShadowController(object):
         #@+node:ekr.20080709062932.11: *4* shortDescription (AtShadowTestCase)
         def shortDescription(self):
             '''AtShadowTestCase.shortDescription.'''
-            return self.p and self.p.h or '@test-shadow: no self.p'
+            return self.p.h if self.p else '@test-shadow: no self.p'
         #@-others
     #@+node:ekr.20090529061522.5727: *3* class x.Marker
     class Marker(object):

@@ -5,7 +5,6 @@
 '''Leo's general editing commands.'''
 #@+<< imports >>
 #@+node:ekr.20150514050149.1: ** << imports >> (editCommands.py)
-import difflib
 import os
 import re
 import leo.core.leoGlobals as g
@@ -22,12 +21,14 @@ class EditCommandsClass(BaseEditCommandsClass):
     '''Editing commands with little or no state.'''
     # pylint: disable=eval-used
     #@+others
-    #@+node:ekr.20150514063305.116: *3* ctor (EditCommandsClass)
+    #@+node:ekr.20150514063305.116: *3* ec.__init__
     def __init__(self, c):
         '''Ctor for EditCommandsClass class.'''
         # pylint: disable=super-init-not-called
         self.c = c
         self.ccolumn = '0' # For comment column functions.
+        self.cursorStack = []
+            # Values are tuples, (i, j, ins)
         self.extendMode = False # True: all cursor move commands extend the selection.
         self.fillPrefix = '' # For fill prefix functions.
         self.fillColumn = 0 # For line centering.
@@ -43,6 +44,10 @@ class EditCommandsClass(BaseEditCommandsClass):
         # Settings...
         cf = c.config
         self.autocompleteBrackets = cf.getBool('autocomplete-brackets')
+        if cf.getBool('auto-justify-on-at-start'):
+            self.autojustify = abs(cf.getInt('auto-justify') or 0)
+        else:
+            self.autojustify = 0
         self.bracketsFlashBg = cf.getColor('flash-brackets-background-color')
         self.bracketsFlashCount = cf.getInt('flash-brackets-count')
         self.bracketsFlashDelay = cf.getInt('flash-brackets-delay')
@@ -52,12 +57,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         self.openBracketsList = cf.getString('open_flash_brackets') or '([{'
         self.closeBracketsList = cf.getString('close_flash_brackets') or ')]}'
         self.initBracketMatcher(c)
-    #@+node:ekr.20150514063305.118: *3* doNothing
-    @cmd('do-nothing')
-    def doNothing(self, event):
-        '''A placeholder command, useful for testing bindings.'''
-        pass
-    #@+node:ekr.20150514063305.190: *3* cache (leoEditCommands)
+    #@+node:ekr.20150514063305.190: *3* ec.cache
     @cmd('clear-all-caches')
     def clearAllCaches(self, event=None):
         '''Clear all of Leo's file caches.'''
@@ -71,8 +71,148 @@ class EditCommandsClass(BaseEditCommandsClass):
         c = self.c
         if c.cacher:
             c.cacher.clearCache()
-    #@+node:ekr.20150514063305.191: *3* capitalization & case
-    #@+node:ekr.20150514063305.192: *4* capitalizeWord & up/downCaseWord
+    #@+node:ekr.20150514063305.118: *3* ec.doNothing
+    @cmd('do-nothing')
+    def doNothing(self, event):
+        '''A placeholder command, useful for testing bindings.'''
+        pass
+    #@+node:ekr.20150514063305.278: *3* ec.insertFileName
+    @cmd('insert-file-name')
+    def insertFileName(self, event=None):
+        '''
+        Prompt for a file name, then insert it at the cursor position.
+        This operation is undoable if done in the body pane.
+
+        The initial path is made by concatenating path_for_p() and the selected
+        text, if there is any, or any path like text immediately preceding the
+        cursor.
+        '''
+        c = self.c
+        w = self.editWidget(event)
+        if w:
+
+            def callback(arg, w=w):
+                i = w.getSelectionRange()[0]
+                w.deleteTextSelection()
+                w.insert(i, arg)
+                if g.app.gui.widget_name(w) == 'body':
+                    c.frame.body.onBodyChanged(undoType='Typing')
+
+            # see if the widget already contains the start of a path
+            start_text = w.getSelectedText()
+            if not start_text:  # look at text preceeding insert point
+                start_text = w.getAllText()[:w.getInsertPoint()]
+                if start_text:
+                    # make non-path characters whitespace
+                    start_text = ''.join(i if i not in '\'"`()[]{}<>!|*,@#$&' else ' '
+                                         for i in start_text)
+                    if start_text[-1].isspace():  # use node path if nothing typed
+                        start_text = ''
+                    else:
+                        start_text = start_text.rsplit(None, 1)[-1]
+                        # set selection range so w.deleteTextSelection() works in the callback
+                        w.setSelectionRange(
+                            w.getInsertPoint()-len(start_text), w.getInsertPoint())
+
+            c.k.functionTail = g.os_path_finalize_join(self.path_for_p(c, c.p), start_text or '')
+            c.k.getFileName(event, callback=callback)
+    #@+node:ekr.20150514063305.279: *3* ec.insertHeadlineTime
+    @cmd('insert-headline-time')
+    def insertHeadlineTime(self, event=None):
+        '''Insert a date/time stamp in the headline of the selected node.'''
+        frame = self
+        c, p = frame.c, self.c.p
+        if g.app.batchMode:
+            c.notValidInBatchMode("Insert Headline Time")
+            return
+        w = c.frame.tree.edit_widget(p)
+            # 2015/06/09: Fix bug 131: Insert time in headline now inserts time in body
+            # Get the wrapper from the tree itself.
+            # Do *not* set w = self.editWidget!
+        if w:
+            # Fix bug https://bugs.launchpad.net/leo-editor/+bug/1185933
+            # insert-headline-time should insert at cursor.
+            # Note: The command must be bound to a key for this to work.
+            ins = w.getInsertPoint()
+            s = c.getTime(body=False)
+            w.insert(ins, s)
+        else:
+            c.endEditing()
+            time = c.getTime(body=False)
+            s = p.h.rstrip()
+            if s:
+                p.h = ' '.join([s, time])
+            else:
+                p.h = time
+            c.redrawAndEdit(p, selectAll=True)
+    #@+node:tbrown.20151118134307.1: *3* ec.path_for_p
+    def path_for_p(self, c, p):
+        """path_for_p - return the filesystem path (directory) containing
+        node `p`.
+
+        FIXME: this general purpose code should be somewhere else, and there
+        may already be functions that do some of the work, although perhaps
+        without handling so many corner cases (@auto-my-custom-type etc.)
+
+        :param outline c: outline containing p
+        :param position p: position to locate
+        :return: path
+        :rtype: str
+        """
+
+        def atfile(p):
+            """return True if p is an @<file> node *of any kind*"""
+            word0 = p.h.split()[0]
+            return (
+                word0 in g.app.atFileNames|set(['@auto']) or
+                word0.startswith('@auto-')
+            )
+
+        aList = g.get_directives_dict_list(p)
+        path = c.scanAtPathDirectives(aList)
+        while c.positionExists(p):
+            if atfile(p):  # see if it's a @<file> node of some sort
+                nodepath = p.h.split(None, 1)[-1]
+                nodepath = g.os_path_join(path, nodepath)
+                if not g.os_path_isdir(nodepath):  # remove filename
+                    nodepath = g.os_path_dirname(nodepath)
+                if g.os_path_isdir(nodepath):  # append if it's a directory
+                    path = nodepath
+                break
+            p.moveToParent()
+
+        return path
+    #@+node:ekr.20150514063305.347: *3* ec.tabify & untabify
+    @cmd('tabify')
+    def tabify(self, event):
+        '''Convert 4 spaces to tabs in the selected text.'''
+        self.tabifyHelper(event, which='tabify')
+
+    @cmd('untabify')
+    def untabify(self, event):
+        '''Convert tabs to 4 spaces in the selected text.'''
+        self.tabifyHelper(event, which='untabify')
+
+    def tabifyHelper(self, event, which):
+        w = self.editWidget(event)
+        if not w or not w.hasSelection():
+            return
+        self.beginCommand(w, undoType=which)
+        i, end = w.getSelectionRange()
+        txt = w.getSelectedText()
+        if which == 'tabify':
+            pattern = re.compile(' {4,4}') # Huh?
+            ntxt = pattern.sub('\t', txt)
+        else:
+            pattern = re.compile('\t')
+            ntxt = pattern.sub('    ', txt)
+        w.delete(i, end)
+        w.insert(i, ntxt)
+        n = i + len(ntxt)
+        w.setSelectionRange(n, n, insert=n)
+        self.endCommand(changed=True, setLabel=True)
+    #@+node:ekr.20150514063305.191: *3* ec: capitalization & case
+    #@+node:ekr.20150514063305.192: *4* ec.capitalizeWord & up/downCaseWord
     @cmd('capitalize-word')
     def capitalizeWord(self, event):
         '''Capitalize the word at the cursor.'''
@@ -87,7 +227,7 @@ class EditCommandsClass(BaseEditCommandsClass):
     def upCaseWord(self, event):
         '''Convert all characters of the word at the cursor to UPPER CASE.'''
         self.capitalizeHelper(event, 'up', 'upcase-word')
-    #@+node:ekr.20150514063305.194: *4* capitalizeHelper
+    #@+node:ekr.20150514063305.194: *4* ec.capitalizeHelper
     def capitalizeHelper(self, event, which, undoType):
         w = self.editWidget(event)
         if not w:
@@ -109,8 +249,8 @@ class EditCommandsClass(BaseEditCommandsClass):
             w.insert(i, word2)
             w.setSelectionRange(ins, ins, insert=ins)
         self.endCommand(changed=changed, setLabel=True)
-    #@+node:ekr.20150514063305.195: *3* clicks and focus (EditCommandsClass)
-    #@+node:ekr.20150514063305.196: *4* activate-x-menu & activateMenu (EditCommandsClass)
+    #@+node:ekr.20150514063305.195: *3* ec: clicks and focus
+    #@+node:ekr.20150514063305.196: *4* ec.activate-x-menu & activateMenu
     @cmd('activate-cmds-menu')
     def activateCmdsMenu(self, event=None):
         '''Activate Leo's Cmnds menu.'''
@@ -149,7 +289,7 @@ class EditCommandsClass(BaseEditCommandsClass):
     def activateMenu(self, menuName):
         c = self.c
         c.frame.menu.activateMenu(menuName)
-    #@+node:ekr.20150514063305.197: *4* cycleFocus
+    #@+node:ekr.20150514063305.197: *4* ec.cycleFocus
     @cmd('cycle-focus')
     def cycleFocus(self, event):
         '''Cycle the keyboard focus between Leo's outline, body and log panes.'''
@@ -175,7 +315,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         c.widgetWantsFocusNow(pane)
         k.newMinibufferWidget = pane
         k.showStateAndMode()
-    #@+node:ekr.20150514063305.198: *4* cycleAllFocus (EditCommandsClass)
+    #@+node:ekr.20150514063305.198: *4* ec.cycleAllFocus
     editWidgetCount = 0
 
     def cycleAllFocus(self, event):
@@ -188,12 +328,12 @@ class EditCommandsClass(BaseEditCommandsClass):
         w = event and event.widget # Does **not** require a text widget.
         pane = None # The widget that will get the new focus.
         log = c.frame.log
-        w_name = g.app.gui.widget_name
-        if trace: g.trace('**before', w_name(w), 'isLog', log.isLogWidget(w))
+        w_name = c.widget_name(w)
+        if trace: g.trace('**before', w_name, 'isLog', log.isLogWidget(w))
         # w may not be the present body widget, so test its name, not its id.
-        if w_name(w).find('tree') > -1 or w_name(w).startswith('head'):
+        if w_name.find('tree') > -1 or w_name.startswith('head'):
             pane = c.frame.body.wrapper
-        elif w_name(w).startswith('body'):
+        elif w_name.startswith('body'):
             # Cycle through the *body* editor if there are several.
             n = c.frame.body.numberOfEditors
             if n > 1:
@@ -219,12 +359,12 @@ class EditCommandsClass(BaseEditCommandsClass):
             # A safe default: go to the body.
             if trace: g.trace('* default to body')
             pane = c.frame.body.wrapper
-        if trace: g.trace('**after', w_name(pane), pane)
+        if trace: g.trace('**after', c.widget_name(pane), pane)
         if pane:
             k.newMinibufferWidget = pane
             c.widgetWantsFocusNow(pane)
             k.showStateAndMode()
-    #@+node:ekr.20150514063305.199: *4* focusTo...
+    #@+node:ekr.20150514063305.199: *4* ec.focusTo...
     @cmd('focus-to-body')
     def focusToBody(self, event=None):
         '''Put the keyboard focus in Leo's body pane.'''
@@ -248,7 +388,7 @@ class EditCommandsClass(BaseEditCommandsClass):
     def focusToTree(self, event=None):
         '''Put the keyboard focus in Leo's outline pane.'''
         self.c.treeWantsFocus()
-    #@+node:ekr.20150514063305.200: *4* clicks in the headline (leoEditCommands)
+    #@+node:ekr.20150514063305.200: *4* ec.clicks in the headline
     # These call wrappers that trigger hooks.
 
     @cmd('click-headline')
@@ -268,7 +408,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         '''Simulate a right click in the headline of the presently selected node.'''
         c = self.c
         c.frame.tree.onHeadlineRightClick(event, c.p)
-    #@+node:ekr.20150514063305.201: *4* clicks in the icon box (leoEditCommands)
+    #@+node:ekr.20150514063305.201: *4* ec.clicks in the icon box
     # These call the actual event handlers so as to trigger hooks.
 
     @cmd('ctrl-click-icon')
@@ -295,7 +435,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         '''Simulate a right click in the icon box of the presently selected node.'''
         c = self.c
         c.frame.tree.onIconBoxRightClick(event, p=c.p)
-    #@+node:ekr.20150514063305.202: *4* clickClickBox
+    #@+node:ekr.20150514063305.202: *4* ec.clickClickBox
     @cmd('click-click-box')
     def clickClickBox(self, event=None):
         '''
@@ -305,7 +445,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         '''
         c = self.c
         c.frame.tree.onClickBoxClick(event, p=c.p)
-    #@+node:ekr.20150514063305.203: *4* simulate...Drag
+    #@+node:ekr.20150514063305.203: *4* ec.simulate...Drag
     # These call the drag setup methods which in turn trigger hooks.
 
     @cmd('simulate-begin-drag')
@@ -320,33 +460,8 @@ class EditCommandsClass(BaseEditCommandsClass):
         c = self.c
         # Note: this assumes that tree.startDrag has already been called.
         c.frame.tree.endDrag(event)
-    #@+node:ekr.20150514063305.204: *3* color & font
-    #@+node:ekr.20150514063305.205: *4* show-colors
-    @cmd('show-colors')
-    def showColors(self, event):
-        '''Open a tab in the log pane showing various color pickers.'''
-        c = self.c
-        log = c.frame.log
-        tabName = 'Colors'
-        if log.frameDict.get(tabName):
-            log.selectTab(tabName)
-        else:
-            log.selectTab(tabName)
-            log.createColorPicker(tabName)
-    #@+node:ekr.20150514063305.206: *4* editCommands.show-fonts & helpers
-    @cmd('show-fonts')
-    def showFonts(self, event):
-        '''Open a tab in the log pane showing a font picker.'''
-        c = self.c
-        log = c.frame.log
-        tabName = 'Fonts'
-        if log.frameDict.get(tabName):
-            log.selectTab(tabName)
-        else:
-            log.selectTab(tabName)
-            log.createFontPicker(tabName)
-    #@+node:ekr.20150514063305.207: *3* comment column...
-    #@+node:ekr.20150514063305.208: *4* setCommentColumn
+    #@+node:ekr.20150514063305.207: *3* ec: comment column
+    #@+node:ekr.20150514063305.208: *4* ec.setCommentColumn
     @cmd('set-comment-column')
     def setCommentColumn(self, event):
         '''Set the comment column for the indent-to-comment-column command.'''
@@ -356,7 +471,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             ins = w.getInsertPoint()
             row, col = g.convertPythonIndexToRowCol(s, ins)
             self.ccolumn = col
-    #@+node:ekr.20150514063305.209: *4* indentToCommentColumn
+    #@+node:ekr.20150514063305.209: *4* ec.indentToCommentColumn
     @cmd('indent-to-comment-column')
     def indentToCommentColumn(self, event):
         '''
@@ -378,113 +493,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             w.insert(i, line2)
         w.setInsertPoint(i + c1)
         self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20160331191740.1: *3* diff-marked-nodes
-    @cmd('diff-marked-nodes')
-    def diffMarkedNodes(self, event):
-        '''
-        This command does nothing unless exactly two nodes, say p1 and p2, are marked.
-
-        When two nodes *are* marked, this command does the following:
-
-        1. Creates a **diff node** as the last top-level node. The body of the
-           diff ndoe shows the diffs between the two marked nodes, that is,
-           difflib.Differ().compare(p1.b, p2.b)
-
-        2. Move *clones* of p1 and p2 to be children of the diff node,
-           and unmarks all nodes. This is usually what is wanted.
-
-        To rerun the command, just mark two nodes again.
-        '''
-        c = self.c
-        aList = [z.copy() for z in c.all_unique_positions() if z.isMarked()]
-        if len(aList) == 2:
-            p1, p2 = aList[0], aList[1]
-            lines1 = g.splitLines(p1.b.rstrip()+'\n')
-            lines2 = g.splitLines(p2.b.rstrip()+'\n')
-            diffLines = difflib.Differ().compare(lines1, lines2)
-            s = ''.join(list(diffLines))
-            p = c.lastTopLevel().insertAfter()
-            p.h = 'Compare: %s, %s' % (g.truncate(p1.h, 22), g.truncate(p2.h, 22))
-            p.b = '1: %s\n2: %s\n%s' % (p1.h, p2.h, s)
-            for p2 in aList:
-                p3 = p2.clone()
-                p3.moveToLastChildOf(p)
-            p.expand()
-            c.unmarkAll()
-            c.selectPosition(p)
-            c.redraw()
-        else:
-            g.es_print('%s nodes marked instead of 2' % len(aList))
-    #@+node:ekr.20150514063305.210: *3* esc methods for Python evaluation
-    #@+node:ekr.20150514063305.211: *4* watchEscape
-    @cmd('escape')
-    def watchEscape(self, event):
-        '''Enter watch escape mode.'''
-        k = self.c.k
-        char = event and event.char or ''
-        if not k.inState():
-            k.setState('escape', 'start', handler=self.watchEscape)
-            k.setLabelBlue('Esc ')
-        elif k.getStateKind() == 'escape':
-            state = k.getState('escape')
-            # hi1 = k.keysymHistory [0]
-            # hi2 = k.keysymHistory [1]
-            data1 = g.app.lossage[0]
-            data2 = g.app.lossage[1]
-            ch1, stroke1 = data1
-            ch2, stroke2 = data2
-            if state == 'esc esc' and char == ':':
-                self.evalExpression(event)
-            elif state == 'evaluate':
-                self.escEvaluate(event)
-            # elif hi1 == hi2 == 'Escape':
-            elif stroke1 == 'Escape' and stroke2 == 'Escape':
-                k.setState('escape', 'esc esc')
-                k.setLabel('Esc Esc -')
-            elif char not in ('Shift_L', 'Shift_R'):
-                k.keyboardQuit()
-    #@+node:ekr.20150514063305.212: *4* escEvaluate (Revise)
-    def escEvaluate(self, event):
-        k = self.c.k
-        w = self.editWidget(event)
-        if not w:
-            return
-        char = event and event.char or ''
-        if k.getLabel() == 'Eval:':
-            k.setLabel('')
-        if char in ('\n', 'Return'):
-            expression = k.getLabel()
-            try:
-                ok = False
-                result = eval(expression, {}, {})
-                result = str(result)
-                i = w.getInsertPoint()
-                w.insert(i, result)
-                ok = True
-            finally:
-                k.keyboardQuit()
-                if not ok:
-                    k.setStatusLabel('Error: Invalid Expression')
-        else:
-            k.updateLabel(event)
-    #@+node:ekr.20150514063305.213: *3* evalExpression
-    @cmd('eval-expression')
-    def evalExpression(self, event):
-        '''Evaluate a Python Expression entered in the minibuffer.'''
-        k = self.c.k
-        state = k.getState('eval-expression')
-        if state == 0:
-            k.setLabelBlue('Eval: ')
-            k.getArg(event, 'eval-expression', 1, self.evalExpression)
-        else:
-            k.clearState()
-            try:
-                e = k.arg
-                result = str(eval(e, {}, {}))
-                k.setLabelGrey('Eval: %s -> %s' % (e, result))
-            except Exception:
-                k.setLabelGrey('Invalid Expression: %s' % e)
-    #@+node:ekr.20150514063305.214: *3* fill column and centering
+    #@+node:ekr.20150514063305.214: *3* ec: fill column and centering
     #@+at
     # 
     # These methods are currently just used in tandem to center the line or
@@ -503,7 +512,7 @@ class EditCommandsClass(BaseEditCommandsClass):
     #                              zaaaaaaaaap
     # 
     # after an center-region command via Alt-x.
-    #@+node:ekr.20150514063305.215: *4* centerLine
+    #@+node:ekr.20150514063305.215: *4* ec.centerLine
     @cmd('center-line')
     def centerLine(self, event):
         '''Centers line within current fill column'''
@@ -527,25 +536,28 @@ class EditCommandsClass(BaseEditCommandsClass):
         if k > i: w.delete(i, k - i)
         w.insert(i, ws)
         self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.216: *4* setFillColumn
+    #@+node:ekr.20150514063305.216: *4* ec.setFillColumn
     @cmd('set-fill-column')
     def setFillColumn(self, event):
         '''Set the fill column used by the center-line and center-region commands.'''
         k = self.c.k
-        state = k.getState('set-fill-column')
-        if state == 0:
+        self.w = self.editWidget(event)
+        if self.w:
             k.setLabelBlue('Set Fill Column: ')
-            k.getArg(event, 'set-fill-column', 1, self.setFillColumn)
-        else:
-            k.clearState()
-            try:
-                # Bug fix: 2011/05/23: set the fillColumn ivar!
-                self.fillColumn = n = int(k.arg)
-                k.setLabelGrey('fill column is: %d' % n)
-                k.commandName = 'set-fill-column %d' % n
-            except ValueError:
-                k.resetLabel()
-    #@+node:ekr.20150514063305.217: *4* centerRegion
+            k.get1Arg(event, handler=self.setFillColumn1)
+
+    def setFillColumn1(self, event):
+        c, k, w = self.c, self.c.k, self.w
+        k.clearState()
+        try:
+            # Bug fix: 2011/05/23: set the fillColumn ivar!
+            self.fillColumn = n = int(k.arg)
+            k.setLabelGrey('fill column is: %d' % n)
+            k.commandName = 'set-fill-column %d' % n
+        except ValueError:
+            k.resetLabel()
+        c.widgetWantsFocus(w)
+    #@+node:ekr.20150514063305.217: *4* ec.centerRegion
     @cmd('center-region')
     def centerRegion(self, event):
         '''Centers the selected text within the fill column'''
@@ -579,7 +591,7 @@ class EditCommandsClass(BaseEditCommandsClass):
                 ind = j + n - (k - i)
         w.setSelectionRange(sel_1, sel_2 + inserted)
         self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.218: *4* setFillPrefix
+    #@+node:ekr.20150514063305.218: *4* ec.setFillPrefix
     @cmd('set-fill-prefix')
     def setFillPrefix(self, event):
         '''Make the selected text the fill prefix.'''
@@ -588,15 +600,15 @@ class EditCommandsClass(BaseEditCommandsClass):
             s = w.getAllText()
             i, j = w.getSelectionRange()
             self.fillPrefix = s[i: j]
-    #@+node:ekr.20150514063305.219: *4* _addPrefix
+    #@+node:ekr.20150514063305.219: *4* ec._addPrefix
     def _addPrefix(self, ntxt):
         # pylint: disable=deprecated-lambda
         ntxt = ntxt.split('.')
         ntxt = map(lambda a: self.fillPrefix + a, ntxt)
         ntxt = '.'.join(ntxt)
         return ntxt
-    #@+node:ekr.20150514063305.220: *3* find (quick)
-    #@+node:ekr.20150514063305.221: *4* backward/findCharacter & helper
+    #@+node:ekr.20150514063305.220: *3* ec: find quick support
+    #@+node:ekr.20150514063305.221: *4* ec.backward/findCharacter & helper
     @cmd('backward-find-character')
     def backwardFindCharacter(self, event):
         '''Search backwards for a character.'''
@@ -616,45 +628,44 @@ class EditCommandsClass(BaseEditCommandsClass):
     def findCharacterExtendSelection(self, event):
         '''Search for a character, extending the selection.'''
         return self.findCharacterHelper(event, backward=False, extend=True)
-    #@+node:ekr.20150514063305.222: *5* findCharacterHelper
+    #@+node:ekr.20150514063305.222: *5* ec.findCharacterHelper
     def findCharacterHelper(self, event, backward, extend):
         '''Put the cursor at the next occurance of a character on a line.'''
         k = self.c.k
-        tag = 'find-char'
-        state = k.getState(tag)
-        if state == 0:
-            self.w = self.editWidget(event)
-            if not self.w:
-                return
-            self.event = event
-            self.backward = backward
-            self.extend = extend or self.extendMode # Bug fix: 2010/01/19
-            self.insert = self.w.getInsertPoint()
-            s = '%s character%s: ' % (
-                'Backward find' if backward else 'Find',
-                ' & extend' if extend else '')
-            k.setLabelBlue(s)
-            # Get the arg without touching the focus.
-            k.getArg(event, tag, 1, self.findCharacter, oneCharacter=True, useMinibuffer=False)
+        self.w = self.editWidget(event)
+        if not self.w:
+            return
+        self.event = event
+        self.backward = backward
+        self.extend = extend or self.extendMode # Bug fix: 2010/01/19
+        self.insert = self.w.getInsertPoint()
+        s = '%s character%s: ' % (
+            'Backward find' if backward else 'Find',
+            ' & extend' if extend else '')
+        k.setLabelBlue(s)
+        # Get the arg without touching the focus.
+        k.getArg(event, handler=self.findCharacter1, oneCharacter=True, useMinibuffer=False)
+
+    def findCharacter1(self, event):
+        k = self.c.k
+        event, w = self.event, self.w
+        backward = self.backward
+        extend = self.extend or self.extendMode
+        ch = k.arg
+        s = w.getAllText()
+        ins = w.toPythonIndex(self.insert)
+        i = ins + -1 if backward else + 1 # skip the present character.
+        if backward:
+            start = 0
+            j = s.rfind(ch, start, max(start, i)) # Skip the character at the cursor.
+            if j > -1: self.moveToHelper(event, j, extend)
         else:
-            event, w = self.event, self.w
-            backward = self.backward
-            extend = self.extend or self.extendMode
-            ch = k.arg
-            s = w.getAllText()
-            ins = w.toPythonIndex(self.insert)
-            i = ins + -1 if backward else + 1 # skip the present character.
-            if backward:
-                start = 0
-                j = s.rfind(ch, start, max(start, i)) # Skip the character at the cursor.
-                if j > -1: self.moveToHelper(event, j, extend)
-            else:
-                end = len(s)
-                j = s.find(ch, min(i, end), end) # Skip the character at the cursor.
-                if j > -1: self.moveToHelper(event, j, extend)
-            k.resetLabel()
-            k.clearState()
-    #@+node:ekr.20150514063305.223: *4* findWord and FindWordOnLine & helper
+            end = len(s)
+            j = s.find(ch, min(i, end), end) # Skip the character at the cursor.
+            if j > -1: self.moveToHelper(event, j, extend)
+        k.resetLabel()
+        k.clearState()
+    #@+node:ekr.20150514063305.223: *4* ec.findWord and FindWordOnLine & helper
     @cmd('find-word')
     def findWord(self, event):
         '''Put the cursor at the next word that starts with a character.'''
@@ -664,65 +675,78 @@ class EditCommandsClass(BaseEditCommandsClass):
     def findWordInLine(self, event):
         '''Put the cursor at the next word (on a line) that starts with a character.'''
         return self.findWordHelper(event, oneLine=True)
-    #@+node:ekr.20150514063305.224: *5* findWordHelper
+    #@+node:ekr.20150514063305.224: *5* ec.findWordHelper
     def findWordHelper(self, event, oneLine):
         k = self.c.k
-        tag = 'find-word'
-        state = k.getState(tag)
-        if state == 0:
-            self.w = self.editWidget(event)
-            if not self.w:
-                return
+        self.w = self.editWidget(event)
+        if self.w:
             self.oneLineFlag = oneLine
             k.setLabelBlue('Find word %sstarting with: ' % (
                 'in line ' if oneLine else ''))
-            k.getArg(event, tag, 1, self.findWord, oneCharacter=True)
-        else:
-            ch = k.arg
-            if ch:
-                w = self.w
-                i = w.getInsertPoint()
-                s = w.getAllText()
-                end = len(s)
-                if self.oneLineFlag:
-                    end = s.find('\n', i) # Limit searches to this line.
-                    if end == -1: end = len(s)
-                while i < end:
-                    i = s.find(ch, i + 1, end) # Ensure progress and i > 0.
-                    if i == -1:
-                        break
-                    elif not g.isWordChar(s[i - 1]):
-                        w.setSelectionRange(i, i, insert=i)
-                        break
-            k.resetLabel()
-            k.clearState()
-    #@+node:ekr.20150514063305.225: *3* goto...
-    #@+node:ekr.20150514063305.226: *4* gotoCharacter
+            k.get1Arg(event, handler=self.findWord1, oneCharacter=True)
+
+    def findWord1(self, event):
+        c, k = self.c, self.c.k
+        ch = k.arg
+        if ch:
+            w = self.w
+            i = w.getInsertPoint()
+            s = w.getAllText()
+            end = len(s)
+            if self.oneLineFlag:
+                end = s.find('\n', i) # Limit searches to this line.
+                if end == -1: end = len(s)
+            while i < end:
+                i = s.find(ch, i + 1, end) # Ensure progress and i > 0.
+                if i == -1:
+                    break
+                elif not g.isWordChar(s[i - 1]):
+                    w.setSelectionRange(i, i, insert=i)
+                    break
+        k.resetLabel()
+        k.clearState()
+        c.widgetWantsFocus(w)
+    #@+node:ekr.20150514063305.225: *3* ec: goto node
+    #@+node:ekr.20170411065920.1: *4* ec.gotoAnyClone
+    @cmd('goto-any-clone')
+    def gotoAnyClone(self, event=None):
+        '''Select then next cloned node, regardless of whether c.p is a clone.'''
+        c = self.c
+        p = c.p.threadNext()
+        while p:
+            if p.isCloned():
+                c.selectPosition(p)
+                return
+            else:
+                p.moveToThreadNext()
+        g.es('no clones found after', c.p.h)
+    #@+node:ekr.20150514063305.226: *4* ec.gotoCharacter
     @cmd('goto-char')
     def gotoCharacter(self, event):
         '''Put the cursor at the n'th character of the buffer.'''
         k = self.c.k
-        state = k.getState('goto-char')
-        if state == 0:
-            self.w = self.editWidget(event)
-            if self.w:
-                k.setLabelBlue("Goto n'th character: ")
-                k.getArg(event, 'goto-char', 1, self.gotoCharacter)
-        else:
-            n = k.arg
-            w = self.w
-            ok = False
-            if n.isdigit():
-                n = int(n)
-                if n >= 0:
-                    w.setInsertPoint(n)
-                    w.seeInsertPoint()
-                    ok = True
-            if not ok:
-                g.warning('goto-char takes non-negative integer argument')
-            k.resetLabel()
-            k.clearState()
-    #@+node:ekr.20150514063305.227: *4* gotoGlobalLine (leoEditCommands)
+        self.w = self.editWidget(event)
+        if self.w:
+            k.setLabelBlue("Goto n'th character: ")
+            k.get1Arg(event, handler=self.gotoCharacter1)
+
+    def gotoCharacter1(self, event):
+        c, k = self.c, self.c.k
+        n = k.arg
+        w = self.w
+        ok = False
+        if n.isdigit():
+            n = int(n)
+            if n >= 0:
+                w.setInsertPoint(n)
+                w.seeInsertPoint()
+                ok = True
+        if not ok:
+            g.warning('goto-char takes non-negative integer argument')
+        k.resetLabel()
+        k.clearState()
+        c.widgetWantsFocus(w)
+    #@+node:ekr.20150514063305.227: *4* ec.gotoGlobalLine
     @cmd('goto-global-line')
     def gotoGlobalLine(self, event):
         '''
@@ -731,56 +755,60 @@ class EditCommandsClass(BaseEditCommandsClass):
 
         For external files containing sentinels, there may be *several* lines
         in the file that correspond to the same line in the outline.
+
+        An Easter Egg: <Alt-x>number invokes this code.
         '''
-        # Improved docstring in response to #253.
+        # Improved docstring for #253: Goto Global line (Alt-G) is inconsistent.
         # https://github.com/leo-editor/leo-editor/issues/253
+        k = self.c.k
+        self.w = self.editWidget(event)
+        if self.w:
+            k.setLabelBlue('Goto global line: ')
+            k.get1Arg(event, handler=self.gotoGlobalLine1)
+
+    def gotoGlobalLine1(self, event):
         c, k = self.c, self.c.k
-        tag = 'goto-global-line'
-        state = k.getState(tag)
-        if state == 0:
-            self.w = self.editWidget(event)
-            if self.w:
-                k.setLabelBlue('Goto global line: ')
-                k.getArg(event, tag, 1, self.gotoGlobalLine)
-        else:
-            n = k.arg
-            k.resetLabel()
-            k.clearState()
-            if n.isdigit():
-                c.gotoCommands.find_file_line(n=int(n))
-    #@+node:ekr.20150514063305.228: *4* gotoLine
+        n = k.arg
+        k.resetLabel()
+        k.clearState()
+        if n.isdigit():
+            # Very important: n is one-based.
+            c.gotoCommands.find_file_line(n=int(n))
+    #@+node:ekr.20150514063305.228: *4* ec.gotoLine
     @cmd('goto-line')
     def gotoLine(self, event):
         '''Put the cursor at the n'th line of the buffer.'''
         k = self.c.k
-        state = k.getState('goto-line')
-        if state == 0:
-            self.w = self.editWidget(event)
-            if self.w:
-                k.setLabelBlue('Goto line: ')
-                k.getArg(event, 'goto-line', 1, self.gotoLine)
-        else:
-            n, w = k.arg, self.w
-            if n.isdigit():
-                s = w.getAllText()
-                i = g.convertRowColToPythonIndex(s, n, 0)
-                w.setInsertPoint(i)
-                w.seeInsertPoint()
-            k.resetLabel()
-            k.clearState()
-    #@+node:ekr.20150514063305.229: *3* icons... (leoEditCommands)
+        self.w = self.editWidget(event)
+        if self.w:
+            k.setLabelBlue('Goto line: ')
+            k.get1Arg(event, handler=self.gotoLine1)
+
+    def gotoLine1(self, event):
+        c, k = self.c, self.c.k
+        n, w = k.arg, self.w
+        if n.isdigit():
+            n = int(n)
+            s = w.getAllText()
+            i = g.convertRowColToPythonIndex(s, n-1, 0)
+            w.setInsertPoint(i)
+            w.seeInsertPoint()
+        k.resetLabel()
+        k.clearState()
+        c.widgetWantsFocus(w)
+    #@+node:ekr.20150514063305.229: *3* ec: icons
     #@+at
     # 
     # To do:
     # 
     # - Define standard icons in a subfolder of Icons folder?
     # - Tree control recomputes height of each line.
-    #@+node:ekr.20150514063305.230: *4*  Helpers
-    #@+node:ekr.20150514063305.231: *5* appendImageDictToList
-    def appendImageDictToList(self, aList, iconDir, path, xoffset, **kargs):
+    #@+node:ekr.20150514063305.230: *4* ec. Helpers
+    #@+node:ekr.20150514063305.231: *5* ec.appendImageDictToList
+    def appendImageDictToList(self, aList, path, xoffset, **kargs):
         c = self.c
-        path = c.os_path_finalize_join(iconDir, path)
-        relPath = g.makePathRelativeTo(path, iconDir)
+        relPath = path  # for finding icon on load in different environment
+        path = g.app.gui.getImageFinder(path)
         # pylint: disable=unpacking-non-sequence
         image, image_height = g.app.gui.getTreeImage(c, path)
         if not image:
@@ -803,11 +831,11 @@ class EditCommandsClass(BaseEditCommandsClass):
         aList.append(newEntry)
         xoffset += 2
         return xoffset
-    #@+node:ekr.20150514063305.232: *5* dHash
+    #@+node:ekr.20150514063305.232: *5* ec.dHash
     def dHash(self, d):
         """Hash a dictionary"""
         return ''.join(['%s%s' % (str(k), str(d[k])) for k in sorted(d)])
-    #@+node:ekr.20150514063305.233: *5* getIconList
+    #@+node:ekr.20150514063305.233: *5* ec.getIconList
     def getIconList(self, p):
         """Return list of icons for position p, call setIconList to apply changes"""
         trace = False and not g.unitTesting
@@ -821,7 +849,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             for i in fromVnode: i['on'] = 'VNode'
         if trace and fromVnode: g.trace('fromVnode', fromVnode, p.h)
         return fromVnode
-    #@+node:ekr.20150514063305.234: *5* setIconList & helpers
+    #@+node:ekr.20150514063305.234: *5* ec.setIconList & helpers
     def setIconList(self, p, l, setDirty=True):
         """Set list of icons for position p to l"""
         trace = False and not g.unitTesting
@@ -836,7 +864,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             return
         if trace: g.trace(l, g.callers(6))
         self._setIconListHelper(p, l, p.v, setDirty)
-    #@+node:ekr.20150514063305.235: *6* _setIconListHelper
+    #@+node:ekr.20150514063305.235: *6* ec._setIconListHelper
     def _setIconListHelper(self, p, subl, uaLoc, setDirty):
         """icon setting code common between v and t nodes
 
@@ -862,7 +890,7 @@ class EditCommandsClass(BaseEditCommandsClass):
                     if setDirty:
                         p.setDirty()
             if trace: g.trace('del uA[icons]', uaLoc)
-    #@+node:ekr.20150514063305.236: *4* deleteFirstIcon
+    #@+node:ekr.20150514063305.236: *4* ec.deleteFirstIcon
     @cmd('delete-first-icon')
     def deleteFirstIcon(self, event=None):
         '''Delete the first icon in the selected node's icon list.'''
@@ -872,7 +900,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             self.setIconList(c.p, aList[1:])
             c.setChanged(True)
             c.redraw_after_icons_changed()
-    #@+node:ekr.20150514063305.237: *4* deleteIconByName
+    #@+node:ekr.20150514063305.237: *4* ec.deleteIconByName
     def deleteIconByName(self, t, name, relPath): # t not used.
         """for use by the right-click remove icon callback"""
         c, p = self.c, self.c.p
@@ -896,7 +924,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             c.redraw_after_icons_changed()
         else:
             g.trace('not found', name)
-    #@+node:ekr.20150514063305.238: *4* deleteLastIcon
+    #@+node:ekr.20150514063305.238: *4* ec.deleteLastIcon
     @cmd('delete-last-icon')
     def deleteLastIcon(self, event=None):
         '''Delete the first icon in the selected node's icon list.'''
@@ -906,7 +934,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             self.setIconList(c.p, aList[: -1])
             c.setChanged(True)
             c.redraw_after_icons_changed()
-    #@+node:ekr.20150514063305.239: *4* deleteNodeIcons
+    #@+node:ekr.20150514063305.239: *4* ec.deleteNodeIcons
     @cmd('delete-node-icons')
     def deleteNodeIcons(self, event=None, p=None):
         '''Delete all of the selected node's icons.'''
@@ -918,7 +946,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             p.setDirty()
             c.setChanged(True)
             c.redraw_after_icons_changed()
-    #@+node:ekr.20150514063305.240: *4* insertIcon
+    #@+node:ekr.20150514063305.240: *4* ec.insertIcon
     @cmd('insert-icon')
     def insertIcon(self, event=None):
         '''Prompt for an icon, and insert it into the node's icon list.'''
@@ -934,29 +962,27 @@ class EditCommandsClass(BaseEditCommandsClass):
         aList = []
         xoffset = 2
         for path in paths:
-            xoffset = self.appendImageDictToList(aList, iconDir, path, xoffset)
+            xoffset = self.appendImageDictToList(aList, path, xoffset)
         aList2 = self.getIconList(p)
         aList2.extend(aList)
         self.setIconList(p, aList2)
         c.setChanged(True)
         c.redraw_after_icons_changed()
-    #@+node:ekr.20150514063305.241: *4* insertIconFromFile
+    #@+node:ekr.20150514063305.241: *4* ec.insertIconFromFile
     def insertIconFromFile(self, path, p=None, pos=None, **kargs):
         c = self.c
         if not p: p = c.p
-        iconDir = c.os_path_finalize_join(g.app.loadDir, "..", "Icons")
-        os.chdir(iconDir)
         aList = []
         xoffset = 2
-        xoffset = self.appendImageDictToList(aList, iconDir, path, xoffset, **kargs)
+        xoffset = self.appendImageDictToList(aList, path, xoffset, **kargs)
         aList2 = self.getIconList(p)
         if pos is None: pos = len(aList2)
         aList2.insert(pos, aList[0])
         self.setIconList(p, aList2)
         c.setChanged(True)
         c.redraw_after_icons_changed()
-    #@+node:ekr.20150514063305.242: *3* indent...
-    #@+node:ekr.20150514063305.243: *4* deleteIndentation
+    #@+node:ekr.20150514063305.242: *3* ec: indent
+    #@+node:ekr.20150514063305.243: *4* ec.deleteIndentation
     @cmd('delete-indentation')
     def deleteIndentation(self, event):
         '''Delete indentation in the presently line.'''
@@ -976,7 +1002,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             ins -= delta
             w.setSelectionRange(ins, ins, insert=ins)
             self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.244: *4* indentRelative
+    #@+node:ekr.20150514063305.244: *4* ec.indentRelative
     @cmd('indent-relative')
     def indentRelative(self, event):
         '''
@@ -1020,29 +1046,8 @@ class EditCommandsClass(BaseEditCommandsClass):
             c.frame.body.onBodyChanged(undoType, oldSel=oldSel, oldText=s, oldYview=oldYview)
         finally:
             self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.245: *3* info...
-    #@+node:ekr.20150514063305.246: *4* howMany
-    @cmd('how-many')
-    def howMany(self, event):
-        '''
-        Print how many occurances of a regular expression are found
-        in the body text of the presently selected node.
-        '''
-        k = self.c.k
-        w = self.editWidget(event)
-        if not w:
-            return
-        state = k.getState('how-many')
-        if state == 0:
-            k.setLabelBlue('How many: ')
-            k.getArg(event, 'how-many', 1, self.howMany)
-        else:
-            k.clearState()
-            s = w.getAllText()
-            reg = re.compile(k.arg)
-            i = reg.findall(s)
-            k.setLabelGrey('%s occurances of %s' % (len(i), k.arg))
-    #@+node:ekr.20150514063305.247: *4* lineNumber
+    #@+node:ekr.20150514063305.245: *3* ec: info
+    #@+node:ekr.20150514063305.247: *4* ec.lineNumber
     @cmd('line-number')
     def lineNumber(self, event):
         '''Print the line and column number and percentage of insert point.'''
@@ -1057,7 +1062,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         k.setLabelGrey(
             'char: %s row: %d col: %d pos: %d (%d%% of %d)' % (
                 repr(s[i]), row, col, i, percent, len(s)))
-    #@+node:ekr.20150514063305.248: *4* k.viewLossage
+    #@+node:ekr.20150514063305.248: *4* ec.k.viewLossage
     @cmd('view-lossage')
     def viewLossage(self, event):
         '''Put the Emacs-lossage in the minibuffer label.'''
@@ -1068,7 +1073,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         for data in aList:
             ch, stroke = data
             g.es('', k.prettyPrintKey(stroke))
-    #@+node:ekr.20150514063305.249: *4* whatLine
+    #@+node:ekr.20150514063305.249: *4* ec.whatLine
     @cmd('what-line')
     def whatLine(self, event):
         '''Print the line number of the line containing the cursor.'''
@@ -1080,8 +1085,8 @@ class EditCommandsClass(BaseEditCommandsClass):
             row, col = g.convertPythonIndexToRowCol(s, i)
             k.keyboardQuit()
             k.setStatusLabel("Line %s" % row)
-    #@+node:ekr.20150514063305.250: *3* insert & delete...
-    #@+node:ekr.20150514063305.251: *4* addSpace/TabToLines & removeSpace/TabFromLines & helper
+    #@+node:ekr.20150514063305.250: *3* ec: insert & delete
+    #@+node:ekr.20150514063305.251: *4* ec.addSpace/TabToLines & removeSpace/TabFromLines & helper
     @cmd('add-space-to-lines')
     def addSpaceToLines(self, event):
         '''Add a space to start of all lines, or all selected lines.'''
@@ -1101,7 +1106,7 @@ class EditCommandsClass(BaseEditCommandsClass):
     def removeTabFromLines(self, event):
         '''Remove a tab from start of all lines, or all selected lines.'''
         self.addRemoveHelper(event, ch='\t', add=False, undoType='remove-tab-from-lines')
-    #@+node:ekr.20150514063305.252: *5* addRemoveHelper
+    #@+node:ekr.20150514063305.252: *5* ec.addRemoveHelper
     def addRemoveHelper(self, event, ch, add, undoType):
         c = self.c
         w = self.editWidget(event)
@@ -1132,7 +1137,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             w.setAllText(result)
             w.setSelectionRange(0, len(s))
         self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.253: *4* backwardDeleteCharacter
+    #@+node:ekr.20150514063305.253: *4* ec.backwardDeleteCharacter
     @cmd('backward-delete-char')
     def backwardDeleteCharacter(self, event=None):
         '''Delete the character to the left of the cursor.'''
@@ -1195,7 +1200,7 @@ class EditCommandsClass(BaseEditCommandsClass):
                 w.delete(ins - 1)
                 ins = ins - 1
                 w.setSelectionRange(ins, ins, insert=ins)
-    #@+node:ekr.20150514063305.255: *4* cleanAllLines
+    #@+node:ekr.20150514063305.255: *4* ec.cleanAllLines
     @cmd('clean-all-lines')
     def cleanAllLines(self, event):
         '''Clean all lines in the selected tree.'''
@@ -1224,7 +1229,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         u.afterChangeGroup(c.p, tag)
         c.redraw_after_icons_changed()
         g.es('cleaned %s nodes' % n)
-    #@+node:ekr.20150514063305.256: *4* cleanLines
+    #@+node:ekr.20150514063305.256: *4* ec.cleanLines
     @cmd('clean-lines')
     def cleanLines(self, event):
         '''Removes trailing whitespace from all lines, preserving newlines.
@@ -1256,7 +1261,7 @@ class EditCommandsClass(BaseEditCommandsClass):
                 w.insert(0, result)
                 w.setInsertPoint(i)
             self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.257: *4* clearSelectedText
+    #@+node:ekr.20150514063305.257: *4* ec.clearSelectedText
     @cmd('clear-selected-text')
     def clearSelectedText(self, event):
         '''Delete the selected text.'''
@@ -1268,7 +1273,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         w.delete(i, j)
         w.setInsertPoint(i)
         self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.258: *4* delete-word & backward-delete-word
+    #@+node:ekr.20150514063305.258: *4* ec.delete-word & backward-delete-word
     @cmd('delete-word')
     def deleteWord(self, event=None):
         '''Delete the word at the cursor.'''
@@ -1293,7 +1298,8 @@ class EditCommandsClass(BaseEditCommandsClass):
         self.deleteWordHelper(event, forward=False, smart=True)
 
     def deleteWordHelper(self, event, forward, smart=False):
-        c, w = self.c, self.editWidget(event)
+        # c = self.c
+        w = self.editWidget(event)
         if not w:
             return
         self.beginCommand(w, undoType="delete-word")
@@ -1307,9 +1313,8 @@ class EditCommandsClass(BaseEditCommandsClass):
         if from_pos > to_pos:
             from_pos, to_pos = to_pos, from_pos
         w.delete(from_pos, to_pos)
-        c.frame.body.forceFullRecolor()
         self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.259: *4* deleteNextChar
+    #@+node:ekr.20150514063305.259: *4* ec.deleteNextChar
     @cmd('delete-char')
     def deleteNextChar(self, event):
         '''Delete the character to the right of the cursor.'''
@@ -1328,7 +1333,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         else:
             changed = False
         self.endCommand(changed=changed, setLabel=False)
-    #@+node:ekr.20150514063305.260: *4* deleteSpaces
+    #@+node:ekr.20150514063305.260: *4* ec.deleteSpaces
     @cmd('delete-spaces')
     def deleteSpaces(self, event, insertspace=False):
         '''Delete all whitespace surrounding the cursor.'''
@@ -1354,7 +1359,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             w.setAllText(s)
             w.setInsertPoint(w1)
             self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.261: *4* insertHardTab
+    #@+node:ekr.20150514063305.261: *4* ec.insertHardTab
     @cmd('insert-hard-tab')
     def insertHardTab(self, event):
         '''Insert one hard tab.'''
@@ -1362,7 +1367,8 @@ class EditCommandsClass(BaseEditCommandsClass):
         w = self.editWidget(event)
         if not w:
             return
-        assert g.isTextWrapper(w)
+        if not g.isTextWrapper(w):
+            return
         name = c.widget_name(w)
         if name.startswith('head'):
             return
@@ -1372,15 +1378,23 @@ class EditCommandsClass(BaseEditCommandsClass):
         ins += 1
         w.setSelectionRange(ins, ins, insert=ins)
         self.endCommand()
-    #@+node:ekr.20150514063305.262: *4* insertNewLine
+    #@+node:ekr.20150514063305.262: *4* ec.insertNewLine
     @cmd('insert-newline')
     def insertNewLine(self, event):
         '''Insert a newline at the cursor.'''
+        self.insertNewlineBase(event)
+
+    insertNewline = insertNewLine
+
+    def insertNewlineBase(self, event):
+        '''A helper that can be monkey-patched by tables.py plugin.'''
+        # Note: insertNewlineHelper already exists.
         c, k = self.c, self.c.k
         w = self.editWidget(event)
         if not w:
             return
-        assert g.isTextWrapper(w)
+        if not g.isTextWrapper(w):
+            return
         name = c.widget_name(w)
         if name.startswith('head'):
             return
@@ -1390,9 +1404,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         k.setInputState('insert')
         k.showStateAndMode()
         self.endCommand()
-
-    insertNewline = insertNewLine
-    #@+node:ekr.20150514063305.263: *4* insertNewLineAndTab
+    #@+node:ekr.20150514063305.263: *4* ec.insertNewLineAndTab
     @cmd('newline-and-indent')
     def insertNewLineAndTab(self, event):
         '''Insert a newline and tab at the cursor.'''
@@ -1401,7 +1413,8 @@ class EditCommandsClass(BaseEditCommandsClass):
         w = self.editWidget(event)
         if not w:
             return
-        assert g.isTextWrapper(w), w
+        if not g.isTextWrapper(w):
+            return
         name = c.widget_name(w)
         if name.startswith('head'):
             return
@@ -1412,7 +1425,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         k.setInputState('insert')
         k.showStateAndMode()
         self.endCommand(changed=True, setLabel=False)
-    #@+node:ekr.20150514063305.264: *4* insertParentheses
+    #@+node:ekr.20150514063305.264: *4* ec.insertParentheses
     @cmd('insert-parentheses')
     def insertParentheses(self, event):
         '''Insert () at the cursor.'''
@@ -1423,7 +1436,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             w.insert(i, '()')
             w.setInsertPoint(i + 1)
             self.endCommand(changed=True, setLabel=False)
-    #@+node:ekr.20150514063305.265: *4* insertSoftTab
+    #@+node:ekr.20150514063305.265: *4* ec.insertSoftTab
     @cmd('insert-soft-tab')
     def insertSoftTab(self, event):
         '''Insert spaces equivalent to one tab.'''
@@ -1431,7 +1444,8 @@ class EditCommandsClass(BaseEditCommandsClass):
         w = self.editWidget(event)
         if not w:
             return
-        assert g.isTextWrapper(w)
+        if not g.isTextWrapper(w):
+            return
         name = c.widget_name(w)
         if name.startswith('head'): return
         tab_width = abs(c.getTabWidth(c.p))
@@ -1441,7 +1455,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         ins += tab_width
         w.setSelectionRange(ins, ins, insert=ins)
         self.endCommand()
-    #@+node:ekr.20150514063305.266: *4* removeBlankLines
+    #@+node:ekr.20150514063305.266: *4* ec.removeBlankLines
     @cmd('remove-blank-lines')
     def removeBlankLines(self, event):
         '''
@@ -1463,37 +1477,36 @@ class EditCommandsClass(BaseEditCommandsClass):
         if changed:
             oldSel, undoType = None, 'remove-blank-lines'
             c.updateBodyPane(head, result, tail, undoType, oldSel, oldYview)
-    #@+node:ekr.20150514063305.267: *4* replaceCurrentCharacter
+    #@+node:ekr.20150514063305.267: *4* ec.replaceCurrentCharacter
     @cmd('replace-current-character')
     def replaceCurrentCharacter(self, event):
         '''Replace the current character with the next character typed.'''
         k = self.c.k
-        tag = 'replace-current-character'
-        state = k.getState(tag)
-        if state == 0:
-            self.w = self.editWidget(event)
-            if self.w:
-                k.setLabelBlue('Replace Character: ')
-                k.getArg(event, tag, 1, self.replaceCurrentCharacter)
-        else:
-            w = self.w
-            ch = k.arg
-            if ch:
-                i, j = w.getSelectionRange()
-                if i > j: i, j = j, i
-                # Use raw insert/delete to retain the coloring.
-                if i == j:
-                    i = max(0, i - 1)
-                    w.delete(i)
-                else:
-                    w.delete(i, j)
-                w.insert(i, ch)
-                w.setInsertPoint(i + 1)
-            k.clearState()
-            k.resetLabel()
-            k.showStateAndMode()
-    #@+node:ekr.20150514063305.268: *4* selfInsertCommand, helpers
-    @cmd('self-insert-command')
+        self.w = self.editWidget(event)
+        if self.w:
+            k.setLabelBlue('Replace Character: ')
+            k.get1Arg(event, handler=self.replaceCurrentCharacter1)
+
+    def replaceCurrentCharacter1(self, event):
+        c, k, w = self.c, self.c.k, self.w
+        ch = k.arg
+        if ch:
+            i, j = w.getSelectionRange()
+            if i > j: i, j = j, i
+            # Use raw insert/delete to retain the coloring.
+            if i == j:
+                i = max(0, i - 1)
+                w.delete(i)
+            else:
+                w.delete(i, j)
+            w.insert(i, ch)
+            w.setInsertPoint(i + 1)
+        k.clearState()
+        k.resetLabel()
+        k.showStateAndMode()
+        c.widgetWantsFocus(w)
+    #@+node:ekr.20150514063305.268: *4* ec.selfInsertCommand, helpers
+    # @cmd('self-insert-command')
     def selfInsertCommand(self, event, action='insert'):
         '''
         Insert a character in the body pane.
@@ -1502,29 +1515,29 @@ class EditCommandsClass(BaseEditCommandsClass):
         It handles undo, bodykey events, tabs, back-spaces and bracket matching.
         '''
         trace = False and not g.unitTesting
-        c, p = self.c, self.c.p
         verbose = True
+        c, p = self.c, self.c.p
         w = self.editWidget(event)
         if not w:
             return
         #@+<< set local vars >>
         #@+node:ekr.20150514063305.269: *5* << set local vars >> (selfInsertCommand)
-        stroke = event and event.stroke or None
-        ch = event and event.char or ''
+        stroke = event.stroke if event else None
+        ch = event.char if event else ''
         if ch == 'Return':
             ch = '\n' # This fixes the MacOS return bug.
         if ch == 'Tab':
             ch = '\t'
         name = c.widget_name(w)
-        oldSel = name.startswith('body') and w.getSelectionRange() or (None, None)
-        oldText = name.startswith('body') and p.b or ''
+        oldSel = w.getSelectionRange() if name.startswith('body') else (None, None)
+        oldText = p.b if name.startswith('body') else ''
         undoType = 'Typing'
         brackets = self.openBracketsList + self.closeBracketsList
         inBrackets = ch and g.toUnicode(ch) in brackets
         #@-<< set local vars >>
         assert g.isStrokeOrNone(stroke)
         if trace: g.trace('ch', repr(ch), 'stroke', stroke)
-        if g.doHook("bodykey1", c=c, p=p, v=p, ch=ch, oldSel=oldSel, undoType=undoType):
+        if g.doHook("bodykey1", c=c, p=p, ch=ch, oldSel=oldSel, undoType=undoType):
             return
         if ch == '\t':
             self.updateTab(p, w)
@@ -1536,20 +1549,9 @@ class EditCommandsClass(BaseEditCommandsClass):
             self.insertNewlineHelper(w, oldSel, undoType)
         elif inBrackets and self.autocompleteBrackets:
             self.updateAutomatchBracket(p, w, ch, oldSel)
-        elif ch: # Null chars must not delete the selection.
-            isPlain = stroke.find('Alt') == -1 and stroke.find('Ctrl') == -1
-            i, j = oldSel
-            if i > j: i, j = j, i
-            # Use raw insert/delete to retain the coloring.
-            if i != j: w.delete(i, j)
-            elif action == 'overwrite': w.delete(i)
-            if isPlain:
-                w.insert(i, ch)
-                w.setInsertPoint(i + 1)
-            else:
-                g.app.gui.insertKeyEvent(event, i)
-            if inBrackets and self.flashMatchingBrackets:
-                self.flashMatchingBracketsHelper(c, ch, i, p, w)
+        elif ch:
+            # Null chars must not delete the selection.
+            self.doPlainChar(action, ch, event, inBrackets, oldSel, stroke, w)
         else:
             return
         # Set the column for up and down keys.
@@ -1563,8 +1565,45 @@ class EditCommandsClass(BaseEditCommandsClass):
         if changed:
             c.frame.body.onBodyChanged(undoType=undoType,
                 oldSel=oldSel, oldText=oldText, oldYview=None)
-        g.doHook("bodykey2", c=c, p=p, v=p, ch=ch, oldSel=oldSel, undoType=undoType)
-    #@+node:ekr.20150514063305.270: *5* doPlainTab
+        g.doHook("bodykey2", c=c, p=p, ch=ch, oldSel=oldSel, undoType=undoType)
+    #@+node:ekr.20160924135613.1: *5* ec.doPlainChar
+    def doPlainChar(self, action, ch, event, inBrackets, oldSel, stroke, w):
+        c, p = self.c, self.c.p
+        isPlain = stroke.find('Alt') == -1 and stroke.find('Ctrl') == -1
+        i, j = oldSel
+        if i > j: i, j = j, i
+        # Use raw insert/delete to retain the coloring.
+        if i != j: w.delete(i, j)
+        elif action == 'overwrite': w.delete(i)
+        if isPlain:
+            ins = w.getInsertPoint()
+            if self.autojustify > 0 and not inBrackets:
+                # Support #14: auto-justify body text.
+                s = w.getAllText()
+                i = g.skip_to_start_of_line(s, ins)
+                i, j = g.getLine(s, i)
+                # Only insert a newline at the end of a line.
+                if j - i >= self.autojustify and (ins >= len(s) or s[ins] == '\n'):
+                    # Find the start of the word.
+                    n = 0
+                    ins -= 1
+                    while ins-1 > 0 and g.isWordChar(s[ins-1]):
+                        n += 1
+                        ins -= 1
+                    sins = ins  # start of insert, to collect trailing whitespace
+                    while sins > 0 and s[sins-1] in (' \t'):
+                        sins -= 1
+                    oldSel = (sins, ins)
+                    self.insertNewlineHelper(w, oldSel, undoType=None)
+                    ins = w.getInsertPoint()
+                    ins += (n+1)
+            w.insert(ins, ch)
+            w.setInsertPoint(ins + 1)
+        else:
+            g.app.gui.insertKeyEvent(event, i)
+        if inBrackets and self.flashMatchingBrackets:
+            self.flashMatchingBracketsHelper(c, ch, i, p, w)
+    #@+node:ekr.20150514063305.270: *5* ec.doPlainTab
     def doPlainTab(self, s, i, tab_width, w):
         '''Insert spaces equivalent to one tab.'''
         start, end = g.getLine(s, i)
@@ -1578,7 +1617,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             w.insert(i, ' ' * n)
             ins = i + n
         w.setSelectionRange(ins, ins, insert=ins)
-    #@+node:ekr.20150514063305.271: *5* flashCharacter (leoEditCommands)
+    #@+node:ekr.20150514063305.271: *5* ec.flashCharacter
     def flashCharacter(self, w, i):
         '''Flash the character at position i of widget w.'''
         bg = self.bracketsFlashBg or 'DodgerBlue1'
@@ -1586,7 +1625,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         flashes = self.bracketsFlashCount or 3
         delay = self.bracketsFlashDelay or 75
         w.flashCharacter(i, bg, fg, flashes, delay)
-    #@+node:ekr.20150514063305.272: *5* flashMatchingBracketsHelper (leoEditCommands)
+    #@+node:ekr.20150514063305.272: *5* ec.flashMatchingBracketsHelper
     def flashMatchingBracketsHelper(self, c, ch, i, p, w):
         '''Flash matching brackets at char ch at position i at widget w.'''
         d = {}
@@ -1606,24 +1645,26 @@ class EditCommandsClass(BaseEditCommandsClass):
         j = g.MatchBrackets(c, p, language).find_matching_bracket(ch, s, i)
         if j is not None:
             self.flashCharacter(w, j)
-    #@+node:ekr.20150514063305.273: *5* initBracketMatcher
+    #@+node:ekr.20150514063305.273: *5* ec.initBracketMatcher
     def initBracketMatcher(self, c):
-        '''Init the bracket matching code in selfInsertCommand.'''
+        '''Init the bracket matching code.'''
+        trace = False and not g.unitTesting
         if len(self.openBracketsList) != len(self.closeBracketsList):
             g.es_print('bad open/close_flash_brackets setting: using defaults')
             self.openBracketsList = '([{'
             self.closeBracketsList = ')]}'
-        # g.trace('self.openBrackets',openBrackets)
-        # g.trace('self.closeBrackets',closeBrackets)
-    #@+node:ekr.20150514063305.274: *5* insertNewlineHelper
+        if trace:
+            g.trace('self.openBrackets',self.openBracketsList)
+            g.trace('self.closeBrackets',self.closeBracketsList)
+    #@+node:ekr.20150514063305.274: *5* ec.insertNewlineHelper
     def insertNewlineHelper(self, w, oldSel, undoType):
         trace = False and not g.unitTesting
         c, p = self.c, self.c.p
         i, j = oldSel
         ch = '\n'
         if trace:
-            s = w.widget.toPlainText()
-            g.trace(i, j, len(s), w)
+            # s = w.widget.toPlainText()
+            g.trace('sel', i, j, g.callers())
         if i != j:
             # No auto-indent if there is selected text.
             w.delete(i, j)
@@ -1639,7 +1680,7 @@ class EditCommandsClass(BaseEditCommandsClass):
                 # No auto-indent if in @nocolor mode or after a Change command.
                 self.updateAutoIndent(p, w)
         w.seeInsertPoint()
-    #@+node:ekr.20150514063305.275: *5* updateAutoIndent (leoEditCommands)
+    #@+node:ekr.20150514063305.275: *5* ec.updateAutoIndent
     def updateAutoIndent(self, p, w):
         '''Handle auto indentation.'''
         trace = False and not g.unitTesting
@@ -1662,12 +1703,12 @@ class EditCommandsClass(BaseEditCommandsClass):
             # Determine if prev line has unclosed parens/brackets/braces
             bracketWidths = [width]
             tabex = 0
-            for i in range(0, len(s)):
-                if s[i] == '\t':
+            for i, ch in enumerate(s):
+                if ch == '\t':
                     tabex += tab_width - 1
-                if s[i] in '([{':
+                if ch in '([{':
                     bracketWidths.append(i + tabex + 1)
-                elif s[i] in '}])' and len(bracketWidths) > 1:
+                elif ch in '}])' and len(bracketWidths) > 1:
                     bracketWidths.pop()
             width = bracketWidths.pop()
         ws = g.computeLeadingWhitespace(width, tab_width)
@@ -1679,7 +1720,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             w.setInsertPoint(i + len(ws))
             w.seeInsertPoint()
                 # 2011/10/02: Fix cursor-movement bug.
-    #@+node:ekr.20150514063305.276: *5* updateAutomatchBracket
+    #@+node:ekr.20150514063305.276: *5* ec.updateAutomatchBracket
     def updateAutomatchBracket(self, p, w, ch, oldSel):
         # assert ch in ('(',')','[',']','{','}')
         c = self.c
@@ -1698,7 +1739,7 @@ class EditCommandsClass(BaseEditCommandsClass):
                 w.setInsertPoint(ins - 1)
         else:
             ins = w.getInsertPoint()
-            ch2 = ins < len(s) and s[ins] or ''
+            ch2 = s[ins] if ins < len(s) else ''
             if ch2 in (')', ']', '}'):
                 ins = w.getInsertPoint()
                 w.setInsertPoint(ins + 1)
@@ -1706,7 +1747,7 @@ class EditCommandsClass(BaseEditCommandsClass):
                 if i != j: w.delete(i, j)
                 w.insert(i, ch)
                 w.setInsertPoint(i + 1)
-    #@+node:ekr.20150514063305.277: *5* updateTab
+    #@+node:ekr.20150514063305.277: *5* ec.updateTab
     def updateTab(self, p, w, smartTab=True):
         '''Add spaces equivalent to a tab.'''
         trace = False and not g.unitTesting
@@ -1738,114 +1779,8 @@ class EditCommandsClass(BaseEditCommandsClass):
                     self.doPlainTab(s, i, tab_width, w)
             else:
                 self.doPlainTab(s, i, tab_width, w)
-    #@+node:ekr.20150514063305.278: *3* insertFileName
-    @cmd('insert-file-name')
-    def insertFileName(self, event=None):
-        '''
-        Prompt for a file name, then insert it at the cursor position.
-        This operation is undoable if done in the body pane.
-
-        The initial path is made by concatenating path_for_p() and the selected
-        text, if there is any, or any path like text immediately preceding the
-        cursor.
-        '''
-        c = self.c
-        w = self.editWidget(event)
-        if w:
-
-            def callback(arg, w=w):
-                i = w.getSelectionRange()[0]
-                w.deleteTextSelection()
-                w.insert(i, arg)
-                if g.app.gui.widget_name(w) == 'body':
-                    c.frame.body.onBodyChanged(undoType='Typing')
-
-            # see if the widget already contains the start of a path
-            start_text = w.getSelectedText()
-            if not start_text:  # look at text preceeding insert point
-                start_text = w.getAllText()[:w.getInsertPoint()]
-                if start_text:
-                    # make non-path characters whitespace
-                    start_text = ''.join(i if i not in '\'"`()[]{}<>!|*,@#$&' else ' '
-                                         for i in start_text)
-                    if start_text[-1].isspace():  # use node path if nothing typed
-                        start_text = ''
-                    else:
-                        start_text = start_text.rsplit(None, 1)[-1]
-                        # set selection range so w.deleteTextSelection() works in the callback
-                        w.setSelectionRange(
-                            w.getInsertPoint()-len(start_text), w.getInsertPoint())
-
-            c.k.functionTail = g.os_path_finalize_join(self.path_for_p(c, c.p), start_text or '')
-            c.k.getFileName(event, callback=callback)
-    #@+node:tbrown.20151118134307.1: *3* path_for_p
-    def path_for_p(self, c, p):
-        """path_for_p - return the filesystem path (directory) containing
-        node `p`.
-
-        FIXME: this general purpose code should be somewhere else, and there
-        may already be functions that do some of the work, although perhaps
-        without handling so many corner cases (@auto-my-custom-type etc.)
-
-        :param outline c: outline containing p
-        :param position p: position to locate
-        :return: path
-        :rtype: str
-        """
-
-        def atfile(p):
-            """return True if p is an @<file> node *of any kind*"""
-            word0 = p.h.split()[0]
-            return (
-                word0 in g.app.atFileNames|set(['@auto']) or
-                word0.startswith('@auto-')
-            )
-
-        aList = g.get_directives_dict_list(p)
-        path = c.scanAtPathDirectives(aList)
-        while c.positionExists(p):
-            if atfile(p):  # see if it's a @<file> node of some sort
-                nodepath = p.h.split(None, 1)[-1]
-                nodepath = g.os_path_join(path, nodepath)
-                if not g.os_path_isdir(nodepath):  # remove filename
-                    nodepath = g.os_path_dirname(nodepath)
-                if g.os_path_isdir(nodepath):  # append if it's a directory
-                    path = nodepath
-                break
-            p.moveToParent()
-
-        return path
-    #@+node:ekr.20150514063305.279: *3* insertHeadlineTime
-    @cmd('insert-headline-time')
-    def insertHeadlineTime(self, event=None):
-        '''Insert a date/time stamp in the headline of the selected node.'''
-        frame = self
-        c, p = frame.c, self.c.p
-        if g.app.batchMode:
-            c.notValidInBatchMode("Insert Headline Time")
-            return
-        w = c.frame.tree.edit_widget(p)
-            # 2015/06/09: Fix bug 131: Insert time in headline now inserts time in body
-            # Get the wrapper from the tree itself.
-            # Do *not* set w = self.editWidget!
-        if w:
-            # Fix bug https://bugs.launchpad.net/leo-editor/+bug/1185933
-            # insert-headline-time should insert at cursor.
-            # Note: The command must be bound to a key for this to work.
-            ins = w.getInsertPoint()
-            s = c.getTime(body=False)
-            w.insert(ins, s)
-        else:
-            c.endEditing()
-            time = c.getTime(body=False)
-            s = p.h.rstrip()
-            if s:
-                p.h = ' '.join([s, time])
-            else:
-                p.h = time
-            c.redrawAndEdit(p, selectAll=True)
-    #@+node:ekr.20150514063305.280: *3* line...
-    #@+node:ekr.20150514063305.281: *4* flushLines
+    #@+node:ekr.20150514063305.280: *3* ec: lines
+    #@+node:ekr.20150514063305.281: *4* ec.flushLines (doesn't work)
     @cmd('flush-lines')
     def flushLines(self, event):
         '''
@@ -1856,16 +1791,16 @@ class EditCommandsClass(BaseEditCommandsClass):
         on the region instead.
         '''
         k = self.c.k
-        state = k.getState('flush-lines')
-        if state == 0:
-            k.setLabelBlue('Flush lines regexp: ')
-            k.getArg(event, 'flush-lines', 1, self.flushLines)
-        else:
-            k.clearState()
-            k.resetLabel()
-            self.linesHelper(event, k.arg, 'flush')
-            k.commandName = 'flush-lines %s' % k.arg
-    #@+node:ekr.20150514063305.282: *4* keepLines
+        k.setLabelBlue('Flush lines regexp: ')
+        k.get1Arg(event, handler=self.flushLines1)
+
+    def flushLines1(self, event):
+        k = self.c.k
+        k.clearState()
+        k.resetLabel()
+        self.linesHelper(event, k.arg, 'flush')
+        k.commandName = 'flush-lines %s' % k.arg
+    #@+node:ekr.20150514063305.282: *4* ec.keepLines (doesn't work)
     @cmd('keep-lines')
     def keepLines(self, event):
         '''
@@ -1876,16 +1811,16 @@ class EditCommandsClass(BaseEditCommandsClass):
         on the region instead.
         '''
         k = self.c.k
-        state = k.getState('keep-lines')
-        if state == 0:
-            k.setLabelBlue('Keep lines regexp: ')
-            k.getArg(event, 'keep-lines', 1, self.keepLines)
-        else:
-            k.clearState()
-            k.resetLabel()
-            self.linesHelper(event, k.arg, 'keep')
-            k.commandName = 'keep-lines %s' % k.arg
-    #@+node:ekr.20150514063305.283: *4* linesHelper
+        k.setLabelBlue('Keep lines regexp: ')
+        k.get1Arg(event, handler=self.keepLines1)
+
+    def keepLines1(self, event):
+        k = self.c.k
+        k.clearState()
+        k.resetLabel()
+        self.linesHelper(event, k.arg, 'keep')
+        k.commandName = 'keep-lines %s' % k.arg
+    #@+node:ekr.20150514063305.283: *4* ec.linesHelper
     def linesHelper(self, event, pattern, which):
         w = self.editWidget(event)
         if not w:
@@ -1915,7 +1850,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         w.insert(i, ''.join(keeplines))
         w.setInsertPoint(i)
         self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.284: *4* splitLine
+    #@+node:ekr.20150514063305.284: *4* ec.splitLine
     @cmd('split-line')
     def splitLine(self, event):
         '''Split a line at the cursor position.'''
@@ -1927,9 +1862,9 @@ class EditCommandsClass(BaseEditCommandsClass):
             w.setAllText(s[: ins] + '\n' + s[ins:])
             w.setInsertPoint(ins + 1)
             self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.285: *3* move cursor... (leoEditCommands)
-    #@+node:ekr.20150514063305.286: *4*  general helpers
-    #@+node:ekr.20150514063305.287: *5* extendHelper
+    #@+node:ekr.20150514063305.285: *3* ec: move cursor
+    #@+node:ekr.20150514063305.286: *4* ec. helpers
+    #@+node:ekr.20150514063305.287: *5* ec.extendHelper
     def extendHelper(self, w, extend, spot, upOrDown=False):
         '''
         Handle the details of extending the selection.
@@ -1939,7 +1874,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         spot:   The *new* insert point.
         '''
         trace = False and not g.unitTesting
-        verbose = False
+        verbose = True
         c, p = self.c, self.c.p
         extend = extend or self.extendMode
         ins = w.getInsertPoint()
@@ -1949,8 +1884,8 @@ class EditCommandsClass(BaseEditCommandsClass):
             'spot=', spot, 'moveSpot', self.moveSpot)
         # Reset the move spot if needed.
         if self.moveSpot is None or p.v != self.moveSpotNode:
-            if trace: g.trace('no spot')
             self.setMoveCol(w, ins if extend else spot) # sets self.moveSpot.
+            if trace: g.trace('no spot: new moveCol', self.moveCol)
         elif extend:
             # 2011/05/20: Fix bug 622819
             # Ctrl-Shift movement is incorrect when there is an unexpected selection.
@@ -1984,7 +1919,7 @@ class EditCommandsClass(BaseEditCommandsClass):
                 # g.trace('plain forward/back move')
                 self.setMoveCol(w, spot) # sets self.moveSpot.
         if extend:
-            if trace: g.trace('range', spot, self.moveSpot)
+            if trace: g.trace('range', 'spot:', spot, 'moveSpot', self.moveSpot)
             if spot < self.moveSpot:
                 w.setSelectionRange(spot, self.moveSpot, insert=spot)
             else:
@@ -1994,7 +1929,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             w.setSelectionRange(spot, spot, insert=spot)
         w.seeInsertPoint()
         c.frame.updateStatusLine()
-    #@+node:ekr.20150514063305.288: *5* moveToHelper (leoEditCommands)
+    #@+node:ekr.20150514063305.288: *5* ec.moveToHelper
     def moveToHelper(self, event, spot, extend):
         '''
         Common helper method for commands the move the cursor
@@ -2010,702 +1945,42 @@ class EditCommandsClass(BaseEditCommandsClass):
             if spot < i: spot = i
             elif spot > j: spot = j
         self.extendHelper(w, extend, spot, upOrDown=False)
-    #@+node:ekr.20150514063305.289: *5* setMoveCol
-    def setMoveCol(self, w, spot):
-        '''Set the column to which an up or down arrow will attempt to move.'''
-        p = self.c.p
-        i, row, col = w.toPythonIndexRowCol(spot)
-        self.moveSpot = i
-        self.moveCol = col
-        self.moveSpotNode = p.v
-    #@+node:ekr.20150514063305.290: *4* backToHome/ExtendSelection
-    @cmd('back-to-home')
-    def backToHome(self, event, extend=False):
-        '''
-        Smart home:
-        Position the point at the first non-blank character on the line,
-        or the start of the line if already there.
-        '''
-        w = self.editWidget(event)
-        if not w: return
-        s = w.getAllText()
-        ins = w.getInsertPoint()
-        if s:
-            i, j = g.getLine(s, ins)
-            i1 = i
-            while i < j and s[i] in (' \t'):
-                i += 1
-            if i == ins:
-                i = i1
-            self.moveToHelper(event, i, extend=extend)
-
-    @cmd('back-to-home-extend-selection')
-    def backToHomeExtendSelection(self, event):
-        self.backToHome(event, extend=True)
-    #@+node:ekr.20150514063305.291: *4* backToIndentation
-    @cmd('back-to-indentation')
-    def backToIndentation(self, event):
-        '''Position the point at the first non-blank character on the line.'''
-        w = self.editWidget(event)
-        if not w:
-            return
-        s = w.getAllText()
-        ins = w.getInsertPoint()
-        i, j = g.getLine(s, ins)
-        while i < j and s[i] in (' \t'):
-            i += 1
-        self.moveToHelper(event, i, extend=False)
-    #@+node:ekr.20150514063305.292: *4* between lines & helper
-    @cmd('next-line')
-    def nextLine(self, event):
-        '''Move the cursor down, extending the selection if in extend mode.'''
-        self.moveUpOrDownHelper(event, 'down', extend=False)
-
-    @cmd('next-line-extend-selection')
-    def nextLineExtendSelection(self, event):
-        '''Extend the selection by moving the cursor down.'''
-        self.moveUpOrDownHelper(event, 'down', extend=True)
-
-    @cmd('previous-line')
-    def prevLine(self, event):
-        '''Move the cursor up, extending the selection if in extend mode.'''
-        self.moveUpOrDownHelper(event, 'up', extend=False)
-
-    @cmd('previous-line-extend-selection')
-    def prevLineExtendSelection(self, event):
-        '''Extend the selection by moving the cursor up.'''
-        self.moveUpOrDownHelper(event, 'up', extend=True)
-    #@+node:ekr.20150514063305.293: *5* moveUpOrDownHelper
-    def moveUpOrDownHelper(self, event, direction, extend):
-        trace = False and not g.unitTesting
-        w = self.editWidget(event)
-        if not w:
-            return
-        ins = w.getInsertPoint()
-        s = w.getAllText()
-        w.seeInsertPoint()
-        if hasattr(w, 'leoMoveCursorHelper'):
-            extend = extend or self.extendMode
-            w.leoMoveCursorHelper(kind=direction, extend=extend)
-        else:
-            # Find the start of the next/prev line.
-            row, col = g.convertPythonIndexToRowCol(s, ins)
-            if trace:
-                gui_ins = w.toPythonIndex(ins)
-                bbox = w.bbox(gui_ins)
-                if bbox:
-                    x, y, width, height = bbox
-                    # bbox: x,y,width,height:  dlineinfo: x,y,width,height,offset
-                    g.trace('gui_ins', gui_ins, 'dlineinfo', w.dlineinfo(gui_ins), 'bbox', bbox)
-                    g.trace('ins', ins, 'row', row, 'col', col,
-                        'event.x', event and event.x, 'event.y', event and event.y)
-                    g.trace('subtracting line height', w.index('@%s,%s' % (x, y - height)))
-                    g.trace('adding      line height', w.index('@%s,%s' % (x, y + height)))
-            i, j = g.getLine(s, ins)
-            if direction == 'down':
-                i2, j2 = g.getLine(s, j)
-            else:
-                i2, j2 = g.getLine(s, i - 1)
-            # The spot is the start of the line plus the column index.
-            n = max(0, j2 - i2 - 1) # The length of the new line.
-            col2 = min(col, n)
-            spot = i2 + col2
-            if trace: g.trace('spot', spot, 'n', n, 'col', col, 'line', repr(s[i2: j2]))
-            self.extendHelper(w, extend, spot, upOrDown=True)
-    #@+node:ekr.20150514063305.294: *4* buffers & helper
-    @cmd('beginning-of-buffer')
-    def beginningOfBuffer(self, event):
-        '''Move the cursor to the start of the body text.'''
-        self.moveToBufferHelper(event, 'home', extend=False)
-
-    @cmd('beginning-of-buffer-extend-selection')
-    def beginningOfBufferExtendSelection(self, event):
-        '''Extend the text selection by moving the cursor to the start of the body text.'''
-        self.moveToBufferHelper(event, 'home', extend=True)
-
-    @cmd('end-of-buffer')
-    def endOfBuffer(self, event):
-        '''Move the cursor to the end of the body text.'''
-        self.moveToBufferHelper(event, 'end', extend=False)
-
-    @cmd('end-of-buffer-extend-selection')
-    def endOfBufferExtendSelection(self, event):
-        '''Extend the text selection by moving the cursor to the end of the body text.'''
-        self.moveToBufferHelper(event, 'end', extend=True)
-    #@+node:ekr.20150514063305.295: *5* moveToBufferHelper
-    def moveToBufferHelper(self, event, spot, extend):
-        w = self.editWidget(event)
-        if not w:
-            return
-        if hasattr(w, 'leoMoveCursorHelper'):
-            extend = extend or self.extendMode
-            w.leoMoveCursorHelper(kind=spot, extend=extend)
-        else:
-            if spot == 'home':
-                self.moveToHelper(event, 0, extend=extend)
-            elif spot == 'end':
-                s = w.getAllText()
-                self.moveToHelper(event, len(s), extend=extend)
-            else:
-                g.trace('can not happen: bad spot', spot)
-    #@+node:ekr.20150514063305.296: *4* characters & helper
-    @cmd('back-char')
-    def backCharacter(self, event):
-        '''Move the cursor back one character, extending the selection if in extend mode.'''
-        self.moveToCharacterHelper(event, 'left', extend=False)
-
-    @cmd('back-char-extend-selection')
-    def backCharacterExtendSelection(self, event):
-        '''Extend the selection by moving the cursor back one character.'''
-        self.moveToCharacterHelper(event, 'left', extend=True)
-
-    @cmd('forward-char')
-    def forwardCharacter(self, event):
-        '''Move the cursor forward one character, extending the selection if in extend mode.'''
-        self.moveToCharacterHelper(event, 'right', extend=False)
-
-    @cmd('forward-char-extend-selection')
-    def forwardCharacterExtendSelection(self, event):
-        '''Extend the selection by moving the cursor forward one character.'''
-        self.moveToCharacterHelper(event, 'right', extend=True)
-    #@+node:ekr.20150514063305.297: *5* moveToCharacterHelper
-    def moveToCharacterHelper(self, event, spot, extend):
-        w = self.editWidget(event)
-        if not w:
-            return
-        if hasattr(w, 'leoMoveCursorHelper'):
-            extend = extend or self.extendMode
-            w.leoMoveCursorHelper(kind=spot, extend=extend)
-        else:
-            i = w.getInsertPoint()
-            if spot == 'left':
-                i = max(0, i - 1)
-                self.moveToHelper(event, i, extend=extend)
-            elif spot == 'right':
-                i = min(i + 1, len(w.getAllText()))
-                self.moveToHelper(event, i, extend=extend)
-            else:
-                g.trace('can not happen: bad spot: %s' % spot)
-    #@+node:ekr.20150514063305.298: *4* clear/set/ToggleExtendMode
-    @cmd('clear-extend-mode')
-    def clearExtendMode(self, event):
-        '''Turn off extend mode: cursor movement commands do not extend the selection.'''
-        self.extendModeHelper(event, False)
-
-    @cmd('set-extend-mode')
-    def setExtendMode(self, event):
-        '''Turn on extend mode: cursor movement commands do extend the selection.'''
-        self.extendModeHelper(event, True)
-
-    @cmd('toggle-extend-mode')
-    def toggleExtendMode(self, event):
-        '''Toggle extend mode, i.e., toggle whether cursor movement commands extend the selections.'''
-        self.extendModeHelper(event, not self.extendMode)
-
-    def extendModeHelper(self, event, val):
-        c = self.c
-        w = self.editWidget(event)
-        if w:
-            self.extendMode = val
-            if not g.unitTesting:
-                # g.red('extend mode','on' if val else 'off'))
-                c.k.showStateAndMode()
-            c.widgetWantsFocusNow(w)
-    #@+node:ekr.20150514063305.299: *4* exchangePointMark
-    @cmd('exchange-point-mark')
-    def exchangePointMark(self, event):
-        '''Exchange the point (insert point) with the mark (the other end of the selected text).'''
-        c = self.c
-        w = self.editWidget(event)
-        if not w:
-            return
-        if hasattr(w, 'leoMoveCursorHelper'):
-            w.leoMoveCursorHelper(kind='exchange', extend=False)
-        else:
-            c.widgetWantsFocusNow(w)
-            i, j = w.getSelectionRange(sort=False)
-            if i == j: return
-            ins = w.getInsertPoint()
-            ins = j if ins == i else i
-            w.setInsertPoint(ins)
-            w.setSelectionRange(i, j, insert=None)
-    #@+node:ekr.20150514063305.300: *4* extend-to-line
-    @cmd('extend-to-line')
-    def extendToLine(self, event):
-        '''Select the line at the cursor.'''
-        w = self.editWidget(event)
-        if not w:
-            return
-        s = w.getAllText()
-        n = len(s)
-        i = w.getInsertPoint()
-        while 0 <= i < n and not s[i] == '\n':
-            i -= 1
-        i += 1
-        i1 = i
-        while 0 <= i < n and not s[i] == '\n':
-            i += 1
-        w.setSelectionRange(i1, i)
-    #@+node:ekr.20150514063305.301: *4* extend-to-sentence
-    @cmd('extend-to-sentence')
-    def extendToSentence(self, event):
-        '''Select the line at the cursor.'''
-        w = self.editWidget(event)
-        if not w:
-            return
-        s = w.getAllText()
-        n = len(s)
-        i = w.getInsertPoint()
-        i2 = 1 + s.find('.', i)
-        if i2 == -1: i2 = n
-        i1 = 1 + s.rfind('.', 0, i2 - 1)
-        w.setSelectionRange(i1, i2)
-    #@+node:ekr.20150514063305.302: *4* extend-to-word
-    @cmd('extend-to-word')
-    def extendToWord(self, event, select=True, w=None):
-        '''Compute the word at the cursor. Select it if select arg is True.'''
-        if not w:
-            w = self.editWidget(event)
-        if not w:
-            return 0, 0
-        s = w.getAllText()
-        n = len(s)
-        i = i1 = w.getInsertPoint()
-        # Find a word char on the present line if one isn't at the cursor.
-        if not (0 <= i < n and g.isWordChar(s[i])):
-            # First, look forward
-            while i < n and not g.isWordChar(s[i]) and s[i] != '\n':
-                i += 1
-            # Next, look backward.
-            if not (0 <= i < n and g.isWordChar(s[i])):
-                i = i1 - 1 if (i >= n or s[i] == '\n') else i1
-                while 0 <= i and not g.isWordChar(s[i]) and s[i] != '\n':
-                    i -= 1
-        # Make sure s[i] is a word char.
-        if 0 <= i < n and g.isWordChar(s[i]):
-            # Find the start of the word.
-            while 0 <= i < n and g.isWordChar(s[i]):
-                i -= 1
-            i += 1
-            i1 = i
-            # Find the end of the word.
-            while 0 <= i < n and g.isWordChar(s[i]):
-                i += 1
-            if select:
-                w.setSelectionRange(i1, i)
-            return i1, i
-        else:
-            return 0, 0
-    #@+node:ekr.20150514063305.303: *4* movePastClose & helper
-    @cmd('move-past-close')
-    def movePastClose(self, event):
-        '''Move the cursor past the closing parenthesis.'''
-        self.movePastCloseHelper(event, extend=False)
-
-    @cmd('move-past-close-extend-selection')
-    def movePastCloseExtendSelection(self, event):
-        '''Extend the selection by moving the cursor past the closing parenthesis.'''
-        self.movePastCloseHelper(event, extend=True)
-    #@+node:ekr.20150514063305.304: *5* movePastCloseHelper
-    def movePastCloseHelper(self, event, extend):
-        c = self.c
-        w = self.editWidget(event)
-        if not w:
-            return
-        c.widgetWantsFocusNow(w)
-        s = w.getAllText()
-        ins = w.getInsertPoint()
-        # Scan backwards for i,j.
-        i = ins
-        while i >= 0 and s[i] != '\n':
-            if s[i] == '(': break
-            i -= 1
-        else: return
-        j = ins
-        while j >= 0 and s[j] != '\n':
-            if s[j] == '(': break
-            j -= 1
-        if i < j: return
-        # Scan forward for i2,j2.
-        i2 = ins
-        while i2 < len(s) and s[i2] != '\n':
-            if s[i2] == ')': break
-            i2 += 1
-        else: return
-        j2 = ins
-        while j2 < len(s) and s[j2] != '\n':
-            if s[j2] == ')': break
-            j2 += 1
-        if i2 > j2: return
-        self.moveToHelper(event, i2 + 1, extend)
-    #@+node:ekr.20150514063305.305: *4* moveWithinLineHelper
+    #@+node:ekr.20150514063305.305: *5* ec.moveWithinLineHelper
     def moveWithinLineHelper(self, event, spot, extend):
         w = self.editWidget(event)
         if not w:
             return
         # Bug fix: 2012/02/28: don't use the Qt end-line logic:
         # it apparently does not work for wrapped lines.
-        if hasattr(w, 'leoMoveCursorHelper') and spot != 'end-line':
+        spots = ('end-line', 'finish-line', 'start-line')
+        if hasattr(w, 'leoMoveCursorHelper') and spot not in spots:
             extend = extend or self.extendMode
             w.leoMoveCursorHelper(kind=spot, extend=extend)
         else:
             s = w.getAllText()
             ins = w.getInsertPoint()
             i, j = g.getLine(s, ins)
-            if spot == 'start-line':
+            line = s[i:j]
+            if spot == 'begin-line': # was 'start-line'
                 self.moveToHelper(event, i, extend=extend)
             elif spot == 'end-line':
                 # Bug fix: 2011/11/13: Significant in external tests.
                 if g.match(s, j - 1, '\n'): j -= 1
                 self.moveToHelper(event, j, extend=extend)
+            elif spot == 'finish-line':
+                if not line.isspace():
+                    if g.match(s, j - 1, '\n'): j -= 1
+                    while j >= 0 and s[j].isspace():
+                        j -= 1
+                self.moveToHelper(event, j, extend=extend)
+            elif spot == 'start-line': # new
+                if not line.isspace():
+                    while i < j and s[i].isspace():
+                        i += 1
+                self.moveToHelper(event, i, extend=extend)
             else:
                 g.trace('can not happen: bad spot: %s' % spot)
-    #@+node:ekr.20150514063305.306: *4* pages & helper
-    @cmd('back-page')
-    def backPage(self, event):
-        '''Move the cursor back one page,
-        extending the selection if in extend mode.'''
-        self.movePageHelper(event, kind='back', extend=False)
-
-    @cmd('back-page-extend-selection')
-    def backPageExtendSelection(self, event):
-        '''Extend the selection by moving the cursor back one page.'''
-        self.movePageHelper(event, kind='back', extend=True)
-
-    @cmd('forward-page')
-    def forwardPage(self, event):
-        '''Move the cursor forward one page,
-        extending the selection if in extend mode.'''
-        self.movePageHelper(event, kind='forward', extend=False)
-
-    @cmd('forward-page-extend-selection')
-    def forwardPageExtendSelection(self, event):
-        '''Extend the selection by moving the cursor forward one page.'''
-        self.movePageHelper(event, kind='forward', extend=True)
-    #@+node:ekr.20150514063305.307: *5* movePageHelper
-    def movePageHelper(self, event, kind, extend): # kind in back/forward.
-        '''Move the cursor up/down one page, possibly extending the selection.'''
-        trace = False and not g.unitTesting
-        w = self.editWidget(event)
-        if not w:
-            return
-        linesPerPage = 15 # To do.
-        if hasattr(w, 'leoMoveCursorHelper'):
-            extend = extend or self.extendMode
-            w.leoMoveCursorHelper(
-                kind='page-down' if kind == 'forward' else 'page-up',
-                extend=extend, linesPerPage=linesPerPage)
-            # w.seeInsertPoint()
-            # c.frame.updateStatusLine()
-            # w.rememberSelectionAndScroll()
-        else:
-            ins = w.getInsertPoint()
-            s = w.getAllText()
-            lines = g.splitLines(s)
-            row, col = g.convertPythonIndexToRowCol(s, ins)
-            row2 = max(0, row - linesPerPage) if kind == 'back' else min(row + linesPerPage, len(lines) - 1)
-            if row == row2: return
-            spot = g.convertRowColToPythonIndex(s, row2, col, lines=lines)
-            if trace: g.trace('spot', spot, 'row2', row2)
-            self.extendHelper(w, extend, spot, upOrDown=True)
-    #@+node:ekr.20150514063305.308: *4* paragraphs & helpers
-    @cmd('back-paragraph')
-    def backwardParagraph(self, event):
-        '''Move the cursor to the previous paragraph.'''
-        self.backwardParagraphHelper(event, extend=False)
-
-    @cmd('back-paragraph-extend-selection')
-    def backwardParagraphExtendSelection(self, event):
-        '''Extend the selection by moving the cursor to the previous paragraph.'''
-        self.backwardParagraphHelper(event, extend=True)
-
-    @cmd('forward-paragraph')
-    def forwardParagraph(self, event):
-        '''Move the cursor to the next paragraph.'''
-        self.forwardParagraphHelper(event, extend=False)
-
-    @cmd('forward-paragraph-extend-selection')
-    def forwardParagraphExtendSelection(self, event):
-        '''Extend the selection by moving the cursor to the next paragraph.'''
-        self.forwardParagraphHelper(event, extend=True)
-    #@+node:ekr.20150514063305.309: *5* backwardParagraphHelper
-    def backwardParagraphHelper(self, event, extend):
-        w = self.editWidget(event)
-        if not w:
-            return
-        s = w.getAllText()
-        i, j = w.getSelectionRange()
-        # A hack for wx gui: set the insertion point to the end of the selection range.
-        if g.app.unitTesting:
-            w.setInsertPoint(j)
-        i, j = g.getLine(s, j)
-        line = s[i: j]
-        if line.strip():
-            # Find the start of the present paragraph.
-            while i > 0:
-                i, j = g.getLine(s, i - 1)
-                line = s[i: j]
-                if not line.strip(): break
-        # Find the end of the previous paragraph.
-        while i > 0:
-            i, j = g.getLine(s, i - 1)
-            line = s[i: j]
-            if line.strip():
-                i = j - 1
-                break
-        self.moveToHelper(event, i, extend)
-    #@+node:ekr.20150514063305.310: *5* forwardParagraphHelper
-    def forwardParagraphHelper(self, event, extend):
-        w = self.editWidget(event)
-        if not w: return
-        s = w.getAllText()
-        ins = w.getInsertPoint()
-        i, j = g.getLine(s, ins)
-        line = s[i: j]
-        if line.strip(): # Skip past the present paragraph.
-            self.selectParagraphHelper(w, i)
-            i, j = w.getSelectionRange()
-            j += 1
-        # Skip to the next non-blank line.
-        i = j
-        while j < len(s):
-            i, j = g.getLine(s, j)
-            line = s[i: j]
-            if line.strip(): break
-        w.setInsertPoint(ins) # Restore the original insert point.
-        self.moveToHelper(event, i, extend)
-    #@+node:ekr.20150514063305.311: *4* selectAllText (leoEditCommands)
-    @cmd('select-all')
-    def selectAllText(self, event):
-        '''Select all text.'''
-        k = self.c.k
-        w = self.editWidget(event)
-        if not w: return
-        # Bug fix 2013/12/13: Special case the minibuffer.
-        if w == k.w:
-            k.selectAll()
-        else:
-            isTextWrapper = g.isTextWrapper(w)
-            if w and isTextWrapper:
-                return w.selectAllText()
-    #@+node:ekr.20150514063305.312: *4* sentences & helpers
-    @cmd('back-sentence')
-    def backSentence(self, event):
-        '''Move the cursor to the previous sentence.'''
-        self.backSentenceHelper(event, extend=False)
-
-    @cmd('back-sentence-extend-selection')
-    def backSentenceExtendSelection(self, event):
-        '''Extend the selection by moving the cursor to the previous sentence.'''
-        self.backSentenceHelper(event, extend=True)
-
-    @cmd('forward-sentence')
-    def forwardSentence(self, event):
-        '''Move the cursor to the next sentence.'''
-        self.forwardSentenceHelper(event, extend=False)
-
-    @cmd('forward-sentence-extend-selection')
-    def forwardSentenceExtendSelection(self, event):
-        '''Extend the selection by moving the cursor to the next sentence.'''
-        self.forwardSentenceHelper(event, extend=True)
-    #@+node:ekr.20150514063305.313: *5* backSentenceHelper
-    def backSentenceHelper(self, event, extend):
-        c = self.c
-        w = self.editWidget(event)
-        if not w:
-            return
-        c.widgetWantsFocusNow(w)
-        s = w.getAllText()
-        ins = w.getInsertPoint()
-        # Find the starting point of the scan.
-        i = ins
-        i -= 1 # Ensure some progress.
-        if i < 0:
-            return
-        # Tricky.
-        if s[i] == '.':
-            i -= 1
-        while i >= 0 and s[i] in ' \n':
-            i -= 1
-        if i >= ins:
-            i -= 1
-        if i >= len(s):
-            i -= 1
-        if i <= 0:
-            return
-        if s[i] == '.':
-            i -= 1
-        # Scan backwards to the end of the paragraph.
-        # Stop at empty lines.
-        # Skip periods within words.
-        # Stop at sentences ending in non-periods.
-        end = False
-        while not end and i >= 0:
-            progress = i
-            if s[i] == '.':
-                # Skip periods surrounded by letters/numbers
-                if i > 0 and s[i - 1].isalnum() and s[i + 1].isalnum():
-                    i -= 1
-                else:
-                    i += 1
-                    while i < len(s) and s[i] in ' \n':
-                        i += 1
-                    i -= 1
-                    break
-            elif s[i] == '\n':
-                j = i - 1
-                while j >= 0:
-                    if s[j] == '\n':
-                        # Don't include first newline.
-                        end = True
-                        break # found blank line.
-                    elif s[j] == ' ':
-                        j -= 1
-                    else:
-                        i -= 1
-                        break # no blank line found.
-                else:
-                    # No blank line found.
-                    i -= 1
-            else:
-                i -= 1
-            assert end or progress > i
-        i += 1
-        if i < ins:
-            self.moveToHelper(event, i, extend)
-    #@+node:ekr.20150514063305.314: *5* forwardSentenceHelper
-    def forwardSentenceHelper(self, event, extend):
-        c = self.c
-        w = self.editWidget(event)
-        if not w:
-            return
-        c.widgetWantsFocusNow(w)
-        s = w.getAllText()
-        ins = w.getInsertPoint()
-        if ins >= len(s):
-            return
-        # Find the starting point of the scan.
-        i = ins
-        if i + 1 < len(s) and s[i + 1] == '.':
-            i += 1
-        if s[i] == '.':
-            i += 1
-        else:
-            while i < len(s) and s[i] in ' \n':
-                i += 1
-            i -= 1
-        if i <= ins:
-            i += 1
-        if i >= len(s):
-            return
-        # Scan forward to the end of the paragraph.
-        # Stop at empty lines.
-        # Skip periods within words.
-        # Stop at sentences ending in non-periods.
-        end = False
-        while not end and i < len(s):
-            progress = i
-            if s[i] == '.':
-                # Skip periods surrounded by letters/numbers
-                if 0 < i < len(s) and s[i - 1].isalnum() and s[i + 1].isalnum():
-                    i += 1
-                else:
-                    i += 1
-                    break # Include the paragraph.
-            elif s[i] == '\n':
-                j = i + 1
-                while j < len(s):
-                    if s[j] == '\n':
-                        # Don't include first newline.
-                        end = True
-                        break # found blank line.
-                    elif s[j] == ' ':
-                        j += 1
-                    else:
-                        i += 1
-                        break # no blank line found.
-                else:
-                    # No blank line found.
-                    i += 1
-            else:
-                i += 1
-            assert end or progress < i
-        i = min(i, len(s))
-        if i > ins:
-            self.moveToHelper(event, i, extend)
-    #@+node:ekr.20150514063305.315: *4* within lines
-    @cmd('beginning-of-line')
-    def beginningOfLine(self, event):
-        '''Move the cursor to the start of the line, extending the selection if in extend mode.'''
-        self.moveWithinLineHelper(event, 'start-line', extend=False)
-
-    @cmd('beginning-of-line-extend-selection')
-    def beginningOfLineExtendSelection(self, event):
-        '''Extend the selection by moving the cursor to the start of the line.'''
-        self.moveWithinLineHelper(event, 'start-line', extend=True)
-
-    @cmd('end-of-line')
-    def endOfLine(self, event):
-        '''Move the cursor to the end of the line, extending the selection if in extend mode.'''
-        self.moveWithinLineHelper(event, 'end-line', extend=False)
-
-    @cmd('end-of-line-extend-selection')
-    def endOfLineExtendSelection(self, event):
-        '''Extend the selection by moving the cursor to the end of the line.'''
-        self.moveWithinLineHelper(event, 'end-line', extend=True)
-    #@+node:ekr.20150514063305.316: *4* words & helper
-    @cmd('back-word')
-    def backwardWord(self, event):
-        '''Move the cursor to the previous word.'''
-        self.moveWordHelper(event, extend=False, forward=False)
-
-    @cmd('back-word-extend-selection')
-    def backwardWordExtendSelection(self, event):
-        '''Extend the selection by moving the cursor to the previous word.'''
-        self.moveWordHelper(event, extend=True, forward=False)
-
-    @cmd('forward-end-word')
-    def forwardEndWord(self, event): # New in Leo 4.4.2
-        '''Move the cursor to the next word.'''
-        self.moveWordHelper(event, extend=False, forward=True, end=True)
-
-    @cmd('forward-end-word-extend-selection')
-    def forwardEndWordExtendSelection(self, event): # New in Leo 4.4.2
-        '''Extend the selection by moving the cursor to the next word.'''
-        self.moveWordHelper(event, extend=True, forward=True, end=True)
-
-    @cmd('forward-word')
-    def forwardWord(self, event):
-        '''Move the cursor to the next word.'''
-        self.moveWordHelper(event, extend=False, forward=True)
-
-    @cmd('forward-word-extend-selection')
-    def forwardWordExtendSelection(self, event):
-        '''Extend the selection by moving the cursor to the end of the next word.'''
-        self.moveWordHelper(event, extend=True, forward=True)
-
-    @cmd('back-word-smart')
-    def backwardWordSmart(self, event):
-        '''Move the cursor to the beginning of the current or the end of the previous word.'''
-        self.moveWordHelper(event, extend=False, forward=False, smart=True)
-
-    @cmd('back-word-smart-extend-selection')
-    def backwardWordSmartExtendSelection(self, event):
-        '''Extend the selection by moving the cursor to the beginning of the current
-        or the end of the previous word.'''
-        self.moveWordHelper(event, extend=True, forward=False, smart=True)
-
-    @cmd('forward-word-smart')
-    def forwardWordSmart(self, event):
-        '''Move the cursor to the end of the current or the beginning of the next word.'''
-        self.moveWordHelper(event, extend=False, forward=True, smart=True)
-
-    @cmd('forward-word-smart-extend-selection')
-    def forwardWordSmartExtendSelection(self, event):
-        '''Extend the selection by moving the cursor to the end of the current
-        or the beginning of the next word.'''
-        self.moveWordHelper(event, extend=True, forward=True, smart=True)
-    #@+node:ekr.20150514063305.317: *5* moveWordHelper
+    #@+node:ekr.20150514063305.317: *5* ec.moveWordHelper
     def moveWordHelper(self, event, extend, forward, end=False, smart=False):
         '''
         Move the cursor to the next/previous word.
@@ -2724,7 +1999,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         whitespace_re = re.compile("\s")
         simple_whitespace_re = re.compile("[ \t]")
         #@+others
-        #@+node:ekr.20150514063305.318: *6* moveWordHelper functions
+        #@+node:ekr.20150514063305.318: *6* ec.moveWordHelper functions
         def is_alphanumeric(c):
             return alphanumeric_re.match(c) is not None
 
@@ -2812,8 +2087,739 @@ class EditCommandsClass(BaseEditCommandsClass):
                     i -= 1
                 i += 1 # 2015/04/30
         self.moveToHelper(event, i, extend)
-    #@+node:ekr.20150514063305.319: *3* paragraph...
-    #@+node:ekr.20150514063305.320: *4* backwardKillParagraph
+    #@+node:ekr.20150514063305.289: *5* ec.setMoveCol
+    def setMoveCol(self, w, spot):
+        '''Set the column to which an up or down arrow will attempt to move.'''
+        p = self.c.p
+        i, row, col = w.toPythonIndexRowCol(spot)
+        self.moveSpot = i
+        self.moveCol = col
+        self.moveSpotNode = p.v
+    #@+node:ekr.20150514063305.290: *4* ec.backToHome/ExtendSelection
+    @cmd('back-to-home')
+    def backToHome(self, event, extend=False):
+        '''
+        Smart home:
+        Position the point at the first non-blank character on the line,
+        or the start of the line if already there.
+        '''
+        w = self.editWidget(event)
+        if not w: return
+        s = w.getAllText()
+        ins = w.getInsertPoint()
+        if s:
+            i, j = g.getLine(s, ins)
+            i1 = i
+            while i < j and s[i] in (' \t'):
+                i += 1
+            if i == ins:
+                i = i1
+            self.moveToHelper(event, i, extend=extend)
+
+    @cmd('back-to-home-extend-selection')
+    def backToHomeExtendSelection(self, event):
+        self.backToHome(event, extend=True)
+    #@+node:ekr.20150514063305.291: *4* ec.backToIndentation
+    @cmd('back-to-indentation')
+    def backToIndentation(self, event):
+        '''Position the point at the first non-blank character on the line.'''
+        w = self.editWidget(event)
+        if not w:
+            return
+        s = w.getAllText()
+        ins = w.getInsertPoint()
+        i, j = g.getLine(s, ins)
+        while i < j and s[i] in (' \t'):
+            i += 1
+        self.moveToHelper(event, i, extend=False)
+    #@+node:ekr.20150514063305.316: *4* ec.backward*/ExtendSelection
+    @cmd('back-word')
+    def backwardWord(self, event):
+        '''Move the cursor to the previous word.'''
+        self.moveWordHelper(event, extend=False, forward=False)
+
+    @cmd('back-word-extend-selection')
+    def backwardWordExtendSelection(self, event):
+        '''Extend the selection by moving the cursor to the previous word.'''
+        self.moveWordHelper(event, extend=True, forward=False)
+
+    @cmd('back-word-smart')
+    def backwardWordSmart(self, event):
+        '''Move the cursor to the beginning of the current or the end of the previous word.'''
+        self.moveWordHelper(event, extend=False, forward=False, smart=True)
+
+    @cmd('back-word-smart-extend-selection')
+    def backwardWordSmartExtendSelection(self, event):
+        '''Extend the selection by moving the cursor to the beginning of the current
+        or the end of the previous word.'''
+        self.moveWordHelper(event, extend=True, forward=False, smart=True)
+
+    #@+node:ekr.20170707072347.1: *4* ec.beginningOfLine/ExtendSelection
+    @cmd('beginning-of-line')
+    def beginningOfLine(self, event):
+        '''Move the cursor to the first character of the line.'''
+        self.moveWithinLineHelper(event, 'begin-line', extend=False)
+
+    @cmd('beginning-of-line-extend-selection')
+    def beginningOfLineExtendSelection(self, event):
+        '''
+        Extend the selection by moving the cursor to the first character of the
+        line.
+        '''
+        self.moveWithinLineHelper(event, 'begin-line', extend=True)
+    #@+node:ekr.20150514063305.292: *4* ec.between lines & helper
+    @cmd('next-line')
+    def nextLine(self, event):
+        '''Move the cursor down, extending the selection if in extend mode.'''
+        self.moveUpOrDownHelper(event, 'down', extend=False)
+
+    @cmd('next-line-extend-selection')
+    def nextLineExtendSelection(self, event):
+        '''Extend the selection by moving the cursor down.'''
+        self.moveUpOrDownHelper(event, 'down', extend=True)
+
+    @cmd('previous-line')
+    def prevLine(self, event):
+        '''Move the cursor up, extending the selection if in extend mode.'''
+        self.moveUpOrDownHelper(event, 'up', extend=False)
+
+    @cmd('previous-line-extend-selection')
+    def prevLineExtendSelection(self, event):
+        '''Extend the selection by moving the cursor up.'''
+        self.moveUpOrDownHelper(event, 'up', extend=True)
+    #@+node:ekr.20150514063305.293: *5* ec.moveUpOrDownHelper
+    def moveUpOrDownHelper(self, event, direction, extend):
+        trace = False and not g.unitTesting
+        w = self.editWidget(event)
+        if not w:
+            return
+        ins = w.getInsertPoint()
+        s = w.getAllText()
+        w.seeInsertPoint()
+        if hasattr(w, 'leoMoveCursorHelper'):
+            extend = extend or self.extendMode
+            w.leoMoveCursorHelper(kind=direction, extend=extend)
+        else:
+            # Find the start of the next/prev line.
+            row, col = g.convertPythonIndexToRowCol(s, ins)
+            if trace:
+                gui_ins = w.toPythonIndex(ins)
+                bbox = w.bbox(gui_ins)
+                if bbox:
+                    x, y, width, height = bbox
+                    # bbox: x,y,width,height:  dlineinfo: x,y,width,height,offset
+                    g.trace('gui_ins', gui_ins, 'dlineinfo', w.dlineinfo(gui_ins), 'bbox', bbox)
+                    g.trace('ins', ins, 'row', row, 'col', col,
+                        'event.x', event and event.x, 'event.y', event and event.y)
+                    g.trace('subtracting line height', w.index('@%s,%s' % (x, y - height)))
+                    g.trace('adding      line height', w.index('@%s,%s' % (x, y + height)))
+            i, j = g.getLine(s, ins)
+            if direction == 'down':
+                i2, j2 = g.getLine(s, j)
+            else:
+                i2, j2 = g.getLine(s, i - 1)
+            # The spot is the start of the line plus the column index.
+            n = max(0, j2 - i2 - 1) # The length of the new line.
+            col2 = min(col, n)
+            spot = i2 + col2
+            if trace: g.trace('spot', spot, 'n', n, 'col', col, 'line', repr(s[i2: j2]))
+            self.extendHelper(w, extend, spot, upOrDown=True)
+    #@+node:ekr.20150514063305.294: *4* ec.buffers & helper
+    @cmd('beginning-of-buffer')
+    def beginningOfBuffer(self, event):
+        '''Move the cursor to the start of the body text.'''
+        self.moveToBufferHelper(event, 'home', extend=False)
+
+    @cmd('beginning-of-buffer-extend-selection')
+    def beginningOfBufferExtendSelection(self, event):
+        '''Extend the text selection by moving the cursor to the start of the body text.'''
+        self.moveToBufferHelper(event, 'home', extend=True)
+
+    @cmd('end-of-buffer')
+    def endOfBuffer(self, event):
+        '''Move the cursor to the end of the body text.'''
+        self.moveToBufferHelper(event, 'end', extend=False)
+
+    @cmd('end-of-buffer-extend-selection')
+    def endOfBufferExtendSelection(self, event):
+        '''Extend the text selection by moving the cursor to the end of the body text.'''
+        self.moveToBufferHelper(event, 'end', extend=True)
+    #@+node:ekr.20150514063305.295: *5* ec.moveToBufferHelper
+    def moveToBufferHelper(self, event, spot, extend):
+        w = self.editWidget(event)
+        if not w:
+            return
+        if hasattr(w, 'leoMoveCursorHelper'):
+            extend = extend or self.extendMode
+            w.leoMoveCursorHelper(kind=spot, extend=extend)
+        else:
+            if spot == 'home':
+                self.moveToHelper(event, 0, extend=extend)
+            elif spot == 'end':
+                s = w.getAllText()
+                self.moveToHelper(event, len(s), extend=extend)
+            else:
+                g.trace('can not happen: bad spot', spot)
+    #@+node:ekr.20150514063305.296: *4* ec.characters & helper
+    @cmd('back-char')
+    def backCharacter(self, event):
+        '''Move the cursor back one character, extending the selection if in extend mode.'''
+        self.moveToCharacterHelper(event, 'left', extend=False)
+
+    @cmd('back-char-extend-selection')
+    def backCharacterExtendSelection(self, event):
+        '''Extend the selection by moving the cursor back one character.'''
+        self.moveToCharacterHelper(event, 'left', extend=True)
+
+    @cmd('forward-char')
+    def forwardCharacter(self, event):
+        '''Move the cursor forward one character, extending the selection if in extend mode.'''
+        self.moveToCharacterHelper(event, 'right', extend=False)
+
+    @cmd('forward-char-extend-selection')
+    def forwardCharacterExtendSelection(self, event):
+        '''Extend the selection by moving the cursor forward one character.'''
+        self.moveToCharacterHelper(event, 'right', extend=True)
+    #@+node:ekr.20150514063305.297: *5* ec.moveToCharacterHelper
+    def moveToCharacterHelper(self, event, spot, extend):
+        w = self.editWidget(event)
+        if not w:
+            return
+        if hasattr(w, 'leoMoveCursorHelper'):
+            extend = extend or self.extendMode
+            w.leoMoveCursorHelper(kind=spot, extend=extend)
+        else:
+            i = w.getInsertPoint()
+            if spot == 'left':
+                i = max(0, i - 1)
+                self.moveToHelper(event, i, extend=extend)
+            elif spot == 'right':
+                i = min(i + 1, len(w.getAllText()))
+                self.moveToHelper(event, i, extend=extend)
+            else:
+                g.trace('can not happen: bad spot: %s' % spot)
+    #@+node:ekr.20150514063305.298: *4* ec.clear/set/ToggleExtendMode
+    @cmd('clear-extend-mode')
+    def clearExtendMode(self, event):
+        '''Turn off extend mode: cursor movement commands do not extend the selection.'''
+        self.extendModeHelper(event, False)
+
+    @cmd('set-extend-mode')
+    def setExtendMode(self, event):
+        '''Turn on extend mode: cursor movement commands do extend the selection.'''
+        self.extendModeHelper(event, True)
+
+    @cmd('toggle-extend-mode')
+    def toggleExtendMode(self, event):
+        '''Toggle extend mode, i.e., toggle whether cursor movement commands extend the selections.'''
+        self.extendModeHelper(event, not self.extendMode)
+
+    def extendModeHelper(self, event, val):
+        c = self.c
+        w = self.editWidget(event)
+        if w:
+            self.extendMode = val
+            if not g.unitTesting:
+                # g.red('extend mode','on' if val else 'off'))
+                c.k.showStateAndMode()
+            c.widgetWantsFocusNow(w)
+    #@+node:ekr.20170707072524.1: *4* ec.endOfLine/ExtendSelection
+    @cmd('end-of-line')
+    def endOfLine(self, event):
+        '''Move the cursor to the last character of the line.'''
+        self.moveWithinLineHelper(event, 'end-line', extend=False)
+
+    @cmd('end-of-line-extend-selection')
+    def endOfLineExtendSelection(self, event):
+        '''Extend the selection by moving the cursor to the last character of the line.'''
+        self.moveWithinLineHelper(event, 'end-line', extend=True)
+    #@+node:ekr.20150514063305.299: *4* ec.exchangePointMark
+    @cmd('exchange-point-mark')
+    def exchangePointMark(self, event):
+        '''
+        Exchange the point (insert point) with the mark (the other end of the
+        selected text).
+        '''
+        c = self.c
+        w = self.editWidget(event)
+        if not w:
+            return
+        if hasattr(w, 'leoMoveCursorHelper'):
+            w.leoMoveCursorHelper(kind='exchange', extend=False)
+        else:
+            c.widgetWantsFocusNow(w)
+            i, j = w.getSelectionRange(sort=False)
+            if i == j: return
+            ins = w.getInsertPoint()
+            ins = j if ins == i else i
+            w.setInsertPoint(ins)
+            w.setSelectionRange(i, j, insert=None)
+    #@+node:ekr.20150514063305.300: *4* ec.extend-to-line
+    @cmd('extend-to-line')
+    def extendToLine(self, event):
+        '''Select the line at the cursor.'''
+        w = self.editWidget(event)
+        if not w:
+            return
+        s = w.getAllText()
+        n = len(s)
+        i = w.getInsertPoint()
+        while 0 <= i < n and not s[i] == '\n':
+            i -= 1
+        i += 1
+        i1 = i
+        while 0 <= i < n and not s[i] == '\n':
+            i += 1
+        w.setSelectionRange(i1, i)
+    #@+node:ekr.20150514063305.301: *4* ec.extend-to-sentence
+    @cmd('extend-to-sentence')
+    def extendToSentence(self, event):
+        '''Select the line at the cursor.'''
+        w = self.editWidget(event)
+        if not w:
+            return
+        s = w.getAllText()
+        n = len(s)
+        i = w.getInsertPoint()
+        i2 = 1 + s.find('.', i)
+        if i2 == -1: i2 = n
+        i1 = 1 + s.rfind('.', 0, i2 - 1)
+        w.setSelectionRange(i1, i2)
+    #@+node:ekr.20150514063305.302: *4* ec.extend-to-word
+    @cmd('extend-to-word')
+    def extendToWord(self, event, select=True, w=None):
+        '''Compute the word at the cursor. Select it if select arg is True.'''
+        if not w:
+            w = self.editWidget(event)
+        if not w:
+            return 0, 0
+        s = w.getAllText()
+        n = len(s)
+        i = i1 = w.getInsertPoint()
+        # Find a word char on the present line if one isn't at the cursor.
+        if not (0 <= i < n and g.isWordChar(s[i])):
+            # First, look forward
+            while i < n and not g.isWordChar(s[i]) and s[i] != '\n':
+                i += 1
+            # Next, look backward.
+            if not (0 <= i < n and g.isWordChar(s[i])):
+                i = i1 - 1 if (i >= n or s[i] == '\n') else i1
+                while 0 <= i and not g.isWordChar(s[i]) and s[i] != '\n':
+                    i -= 1
+        # Make sure s[i] is a word char.
+        if 0 <= i < n and g.isWordChar(s[i]):
+            # Find the start of the word.
+            while 0 <= i < n and g.isWordChar(s[i]):
+                i -= 1
+            i += 1
+            i1 = i
+            # Find the end of the word.
+            while 0 <= i < n and g.isWordChar(s[i]):
+                i += 1
+            if select:
+                w.setSelectionRange(i1, i)
+            return i1, i
+        else:
+            return 0, 0
+    #@+node:ekr.20170707072837.1: *4* ec.finishOfLine/ExtendSelection (new)
+    @cmd('finish-of-line')
+    def finishOfLine(self, event):
+        '''Move the cursor to the last character of the line.'''
+        self.moveWithinLineHelper(event, 'finish-line', extend=False)
+
+    @cmd('finish-of-line-extend-selection')
+    def finishOfLineExtendSelection(self, event):
+        '''Extend the selection by moving the cursor to the last character of the line.'''
+        self.moveWithinLineHelper(event, 'finish-line', extend=True)
+    #@+node:ekr.20170707160947.1: *4* ec.forward*/ExtendSelection
+    @cmd('forward-end-word')
+    def forwardEndWord(self, event): # New in Leo 4.4.2
+        '''Move the cursor to the next word.'''
+        self.moveWordHelper(event, extend=False, forward=True, end=True)
+
+    @cmd('forward-end-word-extend-selection')
+    def forwardEndWordExtendSelection(self, event): # New in Leo 4.4.2
+        '''Extend the selection by moving the cursor to the next word.'''
+        self.moveWordHelper(event, extend=True, forward=True, end=True)
+
+    @cmd('forward-word')
+    def forwardWord(self, event):
+        '''Move the cursor to the next word.'''
+        self.moveWordHelper(event, extend=False, forward=True)
+
+    @cmd('forward-word-extend-selection')
+    def forwardWordExtendSelection(self, event):
+        '''Extend the selection by moving the cursor to the end of the next word.'''
+        self.moveWordHelper(event, extend=True, forward=True)
+
+    @cmd('forward-word-smart')
+    def forwardWordSmart(self, event):
+        '''Move the cursor to the end of the current or the beginning of the next word.'''
+        self.moveWordHelper(event, extend=False, forward=True, smart=True)
+
+    @cmd('forward-word-smart-extend-selection')
+    def forwardWordSmartExtendSelection(self, event):
+        '''Extend the selection by moving the cursor to the end of the current
+        or the beginning of the next word.'''
+        self.moveWordHelper(event, extend=True, forward=True, smart=True)
+    #@+node:ekr.20150514063305.303: *4* ec.movePastClose & helper
+    @cmd('move-past-close')
+    def movePastClose(self, event):
+        '''Move the cursor past the closing parenthesis.'''
+        self.movePastCloseHelper(event, extend=False)
+
+    @cmd('move-past-close-extend-selection')
+    def movePastCloseExtendSelection(self, event):
+        '''Extend the selection by moving the cursor past the closing parenthesis.'''
+        self.movePastCloseHelper(event, extend=True)
+    #@+node:ekr.20150514063305.304: *5* ec.movePastCloseHelper
+    def movePastCloseHelper(self, event, extend):
+        c = self.c
+        w = self.editWidget(event)
+        if not w:
+            return
+        c.widgetWantsFocusNow(w)
+        s = w.getAllText()
+        ins = w.getInsertPoint()
+        # Scan backwards for i,j.
+        i = ins
+        while i >= 0 and s[i] != '\n':
+            if s[i] == '(': break
+            i -= 1
+        else: return
+        j = ins
+        while j >= 0 and s[j] != '\n':
+            if s[j] == '(': break
+            j -= 1
+        if i < j: return
+        # Scan forward for i2,j2.
+        i2 = ins
+        while i2 < len(s) and s[i2] != '\n':
+            if s[i2] == ')': break
+            i2 += 1
+        else: return
+        j2 = ins
+        while j2 < len(s) and s[j2] != '\n':
+            if s[j2] == ')': break
+            j2 += 1
+        if i2 > j2: return
+        self.moveToHelper(event, i2 + 1, extend)
+    #@+node:ekr.20150514063305.306: *4* ec.pages & helper
+    @cmd('back-page')
+    def backPage(self, event):
+        '''Move the cursor back one page,
+        extending the selection if in extend mode.'''
+        self.movePageHelper(event, kind='back', extend=False)
+
+    @cmd('back-page-extend-selection')
+    def backPageExtendSelection(self, event):
+        '''Extend the selection by moving the cursor back one page.'''
+        self.movePageHelper(event, kind='back', extend=True)
+
+    @cmd('forward-page')
+    def forwardPage(self, event):
+        '''Move the cursor forward one page,
+        extending the selection if in extend mode.'''
+        self.movePageHelper(event, kind='forward', extend=False)
+
+    @cmd('forward-page-extend-selection')
+    def forwardPageExtendSelection(self, event):
+        '''Extend the selection by moving the cursor forward one page.'''
+        self.movePageHelper(event, kind='forward', extend=True)
+    #@+node:ekr.20150514063305.307: *5* ec.movePageHelper
+    def movePageHelper(self, event, kind, extend): # kind in back/forward.
+        '''Move the cursor up/down one page, possibly extending the selection.'''
+        trace = False and not g.unitTesting
+        w = self.editWidget(event)
+        if not w:
+            return
+        linesPerPage = 15 # To do.
+        if hasattr(w, 'leoMoveCursorHelper'):
+            extend = extend or self.extendMode
+            w.leoMoveCursorHelper(
+                kind='page-down' if kind == 'forward' else 'page-up',
+                extend=extend, linesPerPage=linesPerPage)
+            # w.seeInsertPoint()
+            # c.frame.updateStatusLine()
+            # w.rememberSelectionAndScroll()
+        else:
+            ins = w.getInsertPoint()
+            s = w.getAllText()
+            lines = g.splitLines(s)
+            row, col = g.convertPythonIndexToRowCol(s, ins)
+            row2 = max(0, row - linesPerPage) if kind == 'back' else min(row + linesPerPage, len(lines) - 1)
+            if row == row2: return
+            spot = g.convertRowColToPythonIndex(s, row2, col, lines=lines)
+            if trace: g.trace('spot', spot, 'row2', row2)
+            self.extendHelper(w, extend, spot, upOrDown=True)
+    #@+node:ekr.20150514063305.308: *4* ec.paragraphs & helpers
+    @cmd('back-paragraph')
+    def backwardParagraph(self, event):
+        '''Move the cursor to the previous paragraph.'''
+        self.backwardParagraphHelper(event, extend=False)
+
+    @cmd('back-paragraph-extend-selection')
+    def backwardParagraphExtendSelection(self, event):
+        '''Extend the selection by moving the cursor to the previous paragraph.'''
+        self.backwardParagraphHelper(event, extend=True)
+
+    @cmd('forward-paragraph')
+    def forwardParagraph(self, event):
+        '''Move the cursor to the next paragraph.'''
+        self.forwardParagraphHelper(event, extend=False)
+
+    @cmd('forward-paragraph-extend-selection')
+    def forwardParagraphExtendSelection(self, event):
+        '''Extend the selection by moving the cursor to the next paragraph.'''
+        self.forwardParagraphHelper(event, extend=True)
+    #@+node:ekr.20150514063305.309: *5* ec.backwardParagraphHelper
+    def backwardParagraphHelper(self, event, extend):
+        w = self.editWidget(event)
+        if not w:
+            return
+        s = w.getAllText()
+        i, j = w.getSelectionRange()
+        # A hack for wx gui: set the insertion point to the end of the selection range.
+        if g.app.unitTesting:
+            w.setInsertPoint(j)
+        i, j = g.getLine(s, j)
+        line = s[i: j]
+        if line.strip():
+            # Find the start of the present paragraph.
+            while i > 0:
+                i, j = g.getLine(s, i - 1)
+                line = s[i: j]
+                if not line.strip(): break
+        # Find the end of the previous paragraph.
+        while i > 0:
+            i, j = g.getLine(s, i - 1)
+            line = s[i: j]
+            if line.strip():
+                i = j - 1
+                break
+        self.moveToHelper(event, i, extend)
+    #@+node:ekr.20150514063305.310: *5* ec.forwardParagraphHelper
+    def forwardParagraphHelper(self, event, extend):
+        w = self.editWidget(event)
+        if not w: return
+        s = w.getAllText()
+        ins = w.getInsertPoint()
+        i, j = g.getLine(s, ins)
+        line = s[i: j]
+        if line.strip(): # Skip past the present paragraph.
+            self.selectParagraphHelper(w, i)
+            i, j = w.getSelectionRange()
+            j += 1
+        # Skip to the next non-blank line.
+        i = j
+        while j < len(s):
+            i, j = g.getLine(s, j)
+            line = s[i: j]
+            if line.strip(): break
+        w.setInsertPoint(ins) # Restore the original insert point.
+        self.moveToHelper(event, i, extend)
+    #@+node:ekr.20170707093335.1: *4* ec.pushCursor and popCursor
+    @cmd('pop-cursor')
+    def popCursor(self, event=None):
+        '''Restore the node, selection range and insert point from the stack.'''
+        c = self.c
+        w = self.editWidget(event)
+        if w and self.cursorStack:
+            p, i, j, ins = self.cursorStack.pop()
+            if c.positionExists(p):
+                c.selectPosition(p)
+                c.redraw()
+                w.setSelectionRange(i, j, insert=ins)
+                c.bodyWantsFocus()
+            else:
+                g.es('invalid position', c.p.h)
+        elif not w:
+            g.es('no stacked cursor', color='blue')
+
+    @cmd('push-cursor')
+    def pushCursor(self, event=None):
+        '''Push the selection range and insert point on the stack.'''
+        c = self.c
+        w = self.editWidget(event)
+        if w:
+            p = c.p.copy()
+            i, j = w.getSelectionRange()
+            ins = w.getInsertPoint()
+            self.cursorStack.append((p, i, j, ins),)
+        else:
+            g.es('cursor not pushed', color='blue')
+    #@+node:ekr.20150514063305.311: *4* ec.selectAllText
+    @cmd('select-all')
+    def selectAllText(self, event):
+        '''Select all text.'''
+        k = self.c.k
+        w = self.editWidget(event)
+        if not w: return
+        # Bug fix 2013/12/13: Special case the minibuffer.
+        if w == k.w:
+            k.selectAll()
+        elif w and g.isTextWrapper(w):
+            w.selectAllText()
+    #@+node:ekr.20150514063305.312: *4* ec.sentences & helpers
+    @cmd('back-sentence')
+    def backSentence(self, event):
+        '''Move the cursor to the previous sentence.'''
+        self.backSentenceHelper(event, extend=False)
+
+    @cmd('back-sentence-extend-selection')
+    def backSentenceExtendSelection(self, event):
+        '''Extend the selection by moving the cursor to the previous sentence.'''
+        self.backSentenceHelper(event, extend=True)
+
+    @cmd('forward-sentence')
+    def forwardSentence(self, event):
+        '''Move the cursor to the next sentence.'''
+        self.forwardSentenceHelper(event, extend=False)
+
+    @cmd('forward-sentence-extend-selection')
+    def forwardSentenceExtendSelection(self, event):
+        '''Extend the selection by moving the cursor to the next sentence.'''
+        self.forwardSentenceHelper(event, extend=True)
+    #@+node:ekr.20150514063305.313: *5* ec.backSentenceHelper
+    def backSentenceHelper(self, event, extend):
+        c = self.c
+        w = self.editWidget(event)
+        if not w:
+            return
+        c.widgetWantsFocusNow(w)
+        s = w.getAllText()
+        ins = w.getInsertPoint()
+        # Find the starting point of the scan.
+        i = ins
+        i -= 1 # Ensure some progress.
+        if i < 0:
+            return
+        # Tricky.
+        if s[i] == '.':
+            i -= 1
+        while i >= 0 and s[i] in ' \n':
+            i -= 1
+        if i >= ins:
+            i -= 1
+        if i >= len(s):
+            i -= 1
+        if i <= 0:
+            return
+        if s[i] == '.':
+            i -= 1
+        # Scan backwards to the end of the paragraph.
+        # Stop at empty lines.
+        # Skip periods within words.
+        # Stop at sentences ending in non-periods.
+        end = False
+        while not end and i >= 0:
+            progress = i
+            if s[i] == '.':
+                # Skip periods surrounded by letters/numbers
+                if i > 0 and s[i - 1].isalnum() and s[i + 1].isalnum():
+                    i -= 1
+                else:
+                    i += 1
+                    while i < len(s) and s[i] in ' \n':
+                        i += 1
+                    i -= 1
+                    break
+            elif s[i] == '\n':
+                j = i - 1
+                while j >= 0:
+                    if s[j] == '\n':
+                        # Don't include first newline.
+                        end = True
+                        break # found blank line.
+                    elif s[j] == ' ':
+                        j -= 1
+                    else:
+                        i -= 1
+                        break # no blank line found.
+                else:
+                    # No blank line found.
+                    i -= 1
+            else:
+                i -= 1
+            assert end or progress > i
+        i += 1
+        if i < ins:
+            self.moveToHelper(event, i, extend)
+    #@+node:ekr.20150514063305.314: *5* ec.forwardSentenceHelper
+    def forwardSentenceHelper(self, event, extend):
+        c = self.c
+        w = self.editWidget(event)
+        if not w:
+            return
+        c.widgetWantsFocusNow(w)
+        s = w.getAllText()
+        ins = w.getInsertPoint()
+        if ins >= len(s):
+            return
+        # Find the starting point of the scan.
+        i = ins
+        if i + 1 < len(s) and s[i + 1] == '.':
+            i += 1
+        if s[i] == '.':
+            i += 1
+        else:
+            while i < len(s) and s[i] in ' \n':
+                i += 1
+            i -= 1
+        if i <= ins:
+            i += 1
+        if i >= len(s):
+            return
+        # Scan forward to the end of the paragraph.
+        # Stop at empty lines.
+        # Skip periods within words.
+        # Stop at sentences ending in non-periods.
+        end = False
+        while not end and i < len(s):
+            progress = i
+            if s[i] == '.':
+                # Skip periods surrounded by letters/numbers
+                if 0 < i < len(s) and s[i - 1].isalnum() and s[i + 1].isalnum():
+                    i += 1
+                else:
+                    i += 1
+                    break # Include the paragraph.
+            elif s[i] == '\n':
+                j = i + 1
+                while j < len(s):
+                    if s[j] == '\n':
+                        # Don't include first newline.
+                        end = True
+                        break # found blank line.
+                    elif s[j] == ' ':
+                        j += 1
+                    else:
+                        i += 1
+                        break # no blank line found.
+                else:
+                    # No blank line found.
+                    i += 1
+            else:
+                i += 1
+            assert end or progress < i
+        i = min(i, len(s))
+        if i > ins:
+            self.moveToHelper(event, i, extend)
+    #@+node:ekr.20170707072644.1: *4* ec.startOfLine/ExtendSelection (new)
+    @cmd('start-of-line')
+    def startOfLine(self, event):
+        '''Move the cursor to first non-blank character of the line.'''
+        self.moveWithinLineHelper(event, 'start-line', extend=False)
+
+    @cmd('start-of-line-extend-selection')
+    def startOfLineExtendSelection(self, event):
+        '''
+        Extend the selection by moving the cursor to first non-blank character
+        of the line.
+        '''
+        self.moveWithinLineHelper(event, 'start-line', extend=True)
+    #@+node:ekr.20150514063305.319: *3* ec: paragraph
+    #@+node:ekr.20150514063305.320: *4* ec.backwardKillParagraph
     @cmd('backward-kill-paragraph')
     def backwardKillParagraph(self, event):
         '''Kill the previous paragraph.'''
@@ -2832,7 +2838,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             w.setSelectionRange(i, i, insert=i)
         finally:
             self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.321: *4* fillRegion
+    #@+node:ekr.20150514063305.321: *4* ec.fillRegion
     @cmd('fill-region')
     def fillRegion(self, event):
         '''Fill all paragraphs in the selected text.'''
@@ -2850,7 +2856,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             if progress >= ins or ins >= j or ins >= len(s):
                 break
         c.undoer.afterChangeGroup(p, undoType)
-    #@+node:ekr.20150514063305.322: *4* fillRegionAsParagraph
+    #@+node:ekr.20150514063305.322: *4* ec.fillRegionAsParagraph
     @cmd('fill-region-as-paragraph')
     def fillRegionAsParagraph(self, event):
         '''Fill the selected text.'''
@@ -2859,7 +2865,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             return
         self.beginCommand(w, undoType='fill-region-as-paragraph')
         self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.323: *4* fillParagraph
+    #@+node:ekr.20150514063305.323: *4* ec.fillParagraph
     @cmd('fill-paragraph')
     def fillParagraph(self, event):
         '''Fill the selected paragraph'''
@@ -2869,7 +2875,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             i, j = w.getSelectionRange()
             w.setSelectionRange(i, i, insert=i)
             self.c.reformatParagraph(event)
-    #@+node:ekr.20150514063305.324: *4* killParagraph
+    #@+node:ekr.20150514063305.324: *4* ec.killParagraph
     @cmd('kill-paragraph')
     def killParagraph(self, event):
         '''Kill the present paragraph.'''
@@ -2887,7 +2893,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             w.setSelectionRange(i, i, insert=i)
         finally:
             self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.325: *4* extend-to-paragraph & helper
+    #@+node:ekr.20150514063305.325: *4* ec.extend-to-paragraph & helper
     @cmd('extend-to-paragraph')
     def extendToParagraph(self, event):
         '''Select the paragraph surrounding the cursor.'''
@@ -2912,7 +2918,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             else: return
         # Select from i to the end of the paragraph.
         self.selectParagraphHelper(w, i)
-    #@+node:ekr.20150514063305.326: *5* selectParagraphHelper
+    #@+node:ekr.20150514063305.326: *5* ec.selectParagraphHelper
     def selectParagraphHelper(self, w, start):
         '''Select from start to the end of the paragraph.'''
         s = w.getAllText()
@@ -2924,8 +2930,8 @@ class EditCommandsClass(BaseEditCommandsClass):
             else: break
         j = max(start, j - 1)
         w.setSelectionRange(i1, j, insert=j)
-    #@+node:ekr.20150514063305.327: *3* region...
-    #@+node:ekr.20150514063305.328: *4* tabIndentRegion (indent-rigidly)
+    #@+node:ekr.20150514063305.327: *3* ec: region
+    #@+node:ekr.20150514063305.328: *4* ec.tabIndentRegion (indent-rigidly)
     @cmd('indent-rigidly')
     def tabIndentRegion(self, event):
         '''Insert a hard tab at the start of each line of the selected text.'''
@@ -2945,7 +2951,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         # Retain original row/col selection.
         w.setSelectionRange(i1, j1 + n, insert=j1 + n)
         self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.329: *4* countRegion
+    #@+node:ekr.20150514063305.329: *4* ec.countRegion
     @cmd('count-region')
     def countRegion(self, event):
         '''Print the number of lines and characters in the selected text.'''
@@ -2961,7 +2967,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             else: chars += 1
         k.setLabelGrey('Region has %s lines, %s character%s' % (
             lines, chars, '' if chars == 1 else 's'))
-    #@+node:ekr.20150514063305.330: *4* moveLinesDown
+    #@+node:ekr.20150514063305.330: *4* ec.moveLinesDown
     @cmd('move-lines-down')
     def moveLinesDown(self, event):
         '''
@@ -2974,22 +2980,18 @@ class EditCommandsClass(BaseEditCommandsClass):
             return
         s = w.getAllText()
         sel_1, sel_2 = w.getSelectionRange()
-        insert_pt = w.getInsertPoint() # 2011/04/01
+        insert_pt = w.getInsertPoint()
         i, junk = g.getLine(s, sel_1)
         i2, j = g.getLine(s, sel_2)
         lines = s[i: j]
         # Select from start of the first line to the *start* of the last line.
         # This prevents selection creep.
-        # n = i2-i
-        # g.trace('moveLinesDown:',repr('%s[[%s|%s|%s]]%s' % (
-        #    s[i-20:i], s[i:sel_1], s[sel_1:sel_2], s[sel_2:j], s[j:j+20])))
         self.beginCommand(w, undoType='move-lines-down')
-        changed = False
         try:
+            next_i, next_j = g.getLine(s, j) # 2011/04/01: was j+1
+            next_line = s[next_i: next_j]
+            n2 = next_j - next_i
             if j < len(s):
-                next_i, next_j = g.getLine(s, j) # 2011/04/01: was j+1
-                next_line = s[next_i: next_j]
-                n2 = next_j - next_i
                 w.delete(i, next_j)
                 if next_line.endswith('\n'):
                     # Simply swap positions with next line
@@ -3001,12 +3003,15 @@ class EditCommandsClass(BaseEditCommandsClass):
                     n2 += 1
                 w.insert(i, new_lines)
                 w.setSelectionRange(sel_1 + n2, sel_2 + n2, insert=insert_pt + n2)
-                changed = True
-                # Fix bug 799695: colorizer bug after move-lines-up into a docstring
-                c.recolor_now(incremental=False)
+            else:
+                # Leo 5.6: insert a blank line before the selected lines.
+                w.insert(i, '\n')
+                w.setSelectionRange(sel_1 + 1, sel_2 + 1, insert=insert_pt + 1)
+            # Fix bug 799695: colorizer bug after move-lines-up into a docstring
+            c.recolor()
         finally:
-            self.endCommand(changed=changed, setLabel=True)
-    #@+node:ekr.20150514063305.331: *4* moveLinesUp
+            self.endCommand(changed=True, setLabel=True)
+    #@+node:ekr.20150514063305.331: *4* ec.moveLinesUp
     @cmd('move-lines-up')
     def moveLinesUp(self, event):
         '''
@@ -3023,15 +3028,12 @@ class EditCommandsClass(BaseEditCommandsClass):
         i, junk = g.getLine(s, sel_1)
         i2, j = g.getLine(s, sel_2)
         lines = s[i: j]
-        # g.trace('moveLinesUp:',repr('%s[[%s|%s|%s]]%s' % (
-        #    s[max(0,i-20):i], s[i:sel_1], s[sel_1:sel_2], s[sel_2:j], s[j:j+20])))
         self.beginCommand(w, undoType='move-lines-up')
-        changed = False
         try:
+            prev_i, prev_j = g.getLine(s, i - 1)
+            prev_line = s[prev_i: prev_j]
+            n2 = prev_j - prev_i
             if i > 0:
-                prev_i, prev_j = g.getLine(s, i - 1)
-                prev_line = s[prev_i: prev_j]
-                n2 = prev_j - prev_i
                 w.delete(prev_i, j)
                 if lines.endswith('\n'):
                     # Simply swap positions with next line
@@ -3042,12 +3044,15 @@ class EditCommandsClass(BaseEditCommandsClass):
                     new_lines = lines + '\n' + prev_line[: -1]
                 w.insert(prev_i, new_lines)
                 w.setSelectionRange(sel_1 - n2, sel_2 - n2, insert=insert_pt - n2)
-                changed = True
-                # Fix bug 799695: colorizer bug after move-lines-up into a docstring
-                c.recolor_now(incremental=False)
+            else:
+                # Leo 5.6: Insert a blank line after the line.
+                w.insert(j, '\n')
+                w.setSelectionRange(sel_1, sel_2, insert=sel_1)
+            # Fix bug 799695: colorizer bug after move-lines-up into a docstring
+            c.recolor()
         finally:
-            self.endCommand(changed=changed, setLabel=True)
-    #@+node:ekr.20150514063305.332: *4* reverseRegion
+            self.endCommand(changed=True, setLabel=True)
+    #@+node:ekr.20150514063305.332: *4* ec.reverseRegion
     @cmd('reverse-region')
     def reverseRegion(self, event):
         '''Reverse the order of lines in the selected text.'''
@@ -3067,7 +3072,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         ins = i1 + len(txt) - 1
         w.setSelectionRange(ins, ins, insert=ins)
         self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.333: *4* up/downCaseRegion & helper
+    #@+node:ekr.20150514063305.333: *4* ec.up/downCaseRegion & helper
     @cmd('downcase-region')
     def downCaseRegion(self, event):
         '''Convert all characters in the selected text to lower case.'''
@@ -3106,16 +3111,16 @@ class EditCommandsClass(BaseEditCommandsClass):
             w.setAllText(s2)
             w.setSelectionRange(i, j, insert=ins)
         self.endCommand(changed=changed, setLabel=True)
-    #@+node:ekr.20150514063305.334: *3* scrolling...
-    #@+node:ekr.20150514063305.335: *4* scrollUp/Down & helper
+    #@+node:ekr.20150514063305.334: *3* ec: scrolling
+    #@+node:ekr.20150514063305.335: *4* ec.scrollUp/Down & helper
     @cmd('scroll-down-half-page')
     def scrollDownHalfPage(self, event):
-        '''Scroll the presently selected pane down one lline.'''
+        '''Scroll the presently selected pane down one line.'''
         self.scrollHelper(event, 'down', 'half-page')
 
     @cmd('scroll-down-line')
     def scrollDownLine(self, event):
-        '''Scroll the presently selected pane down one lline.'''
+        '''Scroll the presently selected pane down one line.'''
         self.scrollHelper(event, 'down', 'line')
 
     @cmd('scroll-down-page')
@@ -3125,7 +3130,7 @@ class EditCommandsClass(BaseEditCommandsClass):
 
     @cmd('scroll-up-half-page')
     def scrollUpHalfPage(self, event):
-        '''Scroll the presently selected pane down one lline.'''
+        '''Scroll the presently selected pane down one line.'''
         self.scrollHelper(event, 'up', 'half-page')
 
     @cmd('scroll-up-line')
@@ -3137,7 +3142,7 @@ class EditCommandsClass(BaseEditCommandsClass):
     def scrollUpPage(self, event):
         '''Scroll the presently selected pane up one page.'''
         self.scrollHelper(event, 'up', 'page')
-    #@+node:ekr.20150514063305.336: *5* scrollHelper (leoEditCommands)
+    #@+node:ekr.20150514063305.336: *5* ec.scrollHelper
     def scrollHelper(self, event, direction, distance):
         '''
         Scroll the present pane up or down one page
@@ -3147,7 +3152,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         if w and hasattr(w, 'scrollDelegate'):
             kind = direction + '-' + distance
             w.scrollDelegate(kind)
-    #@+node:ekr.20150514063305.337: *4* scrollOutlineUp/Down/Line/Page
+    #@+node:ekr.20150514063305.337: *4* ec.scrollOutlineUp/Down/Line/Page
     @cmd('scroll-outline-down-line')
     def scrollOutlineDownLine(self, event=None):
         '''Scroll the outline pane down one line.'''
@@ -3187,7 +3192,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         elif hasattr(tree.canvas, 'leo_treeBar'):
             a, b = tree.canvas.leo_treeBar.get()
             if a > 0.0: tree.canvas.yview_scroll(-1, "page")
-    #@+node:ekr.20150514063305.338: *4* scrollOutlineLeftRight
+    #@+node:ekr.20150514063305.338: *4* ec.scrollOutlineLeftRight
     @cmd('scroll-outline-left')
     def scrollOutlineLeft(self, event=None):
         '''Scroll the outline left.'''
@@ -3205,9 +3210,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             tree.scrollDelegate('right')
         elif hasattr(tree.canvas, 'xview_scroll'):
             tree.canvas.xview_scroll(-1, "unit")
-    #@+node:ekr.20150514063305.339: *3* sort...
-    #@@nocolor
-    #@@color
+    #@+node:ekr.20150514063305.339: *3* ec: sort
     #@+at
     # XEmacs provides several commands for sorting text in a buffer.  All
     # operate on the contents of the region (the text between point and the
@@ -3307,7 +3310,7 @@ class EditCommandsClass(BaseEditCommandsClass):
     # and the mark, except that the text on each line to the left or right of
     # the rectangle moves along with the text inside the rectangle.  *Note
     # Rectangles::.
-    #@+node:ekr.20150514063305.340: *4* sortLines commands
+    #@+node:ekr.20150514063305.340: *4* ec.sortLines commands
     @cmd('reverse-sort-lines-ignoring-case')
     def reverseSortLinesIgnoringCase(self, event):
         '''Sort the selected lines in reverse order, ignoring case.'''
@@ -3357,7 +3360,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             w.setSelectionRange(sel1, sel2, insert=ins)
         finally:
             self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.341: *4* sortColumns
+    #@+node:ekr.20150514063305.341: *4* ec.sortColumns
     @cmd('sort-columns')
     def sortColumns(self, event):
         '''
@@ -3389,7 +3392,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             w.setSelectionRange(sel_1, sel_1 + len(s), insert=sel_1 + len(s))
         finally:
             self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.342: *4* sortFields
+    #@+node:ekr.20150514063305.342: *4* ec.sortFields
     @cmd('sort-fields')
     def sortFields(self, event, which=None):
         '''
@@ -3426,8 +3429,7 @@ class EditCommandsClass(BaseEditCommandsClass):
                 if len(f) < i: return
                 i = i - 1
                 fields.append(f[i])
-        nz = zip(fields, txt)
-        nz.sort()
+        nz = sorted(zip(fields, txt))
         w.delete(i, j)
         int1 = i
         for z in nz:
@@ -3435,8 +3437,8 @@ class EditCommandsClass(BaseEditCommandsClass):
             int1 = int1 + 1
         w.setInsertPoint(ins)
         self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.343: *3* swap/transpose...
-    #@+node:ekr.20150514063305.344: *4* transposeLines
+    #@+node:ekr.20150514063305.343: *3* ec: swap/transpose
+    #@+node:ekr.20150514063305.344: *4* ec.transposeLines
     @cmd('transpose-lines')
     def transposeLines(self, event):
         '''Transpose the line containing the cursor with the preceding line.'''
@@ -3463,7 +3465,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             w.insert(i2, line1 + line2)
             w.setInsertPoint(j - 1)
         self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.345: *4* transposeWords
+    #@+node:ekr.20150514063305.345: *4* ec.transposeWords
     @cmd('transpose-words')
     def transposeWords(self, event):
         '''
@@ -3496,7 +3498,7 @@ class EditCommandsClass(BaseEditCommandsClass):
             w.setAllText(s3)
             w.setSelectionRange(j1, j1, insert=j1)
         self.endCommand(changed=changed, setLabel=True)
-    #@+node:ekr.20150514063305.346: *4* swapCharacters & transeposeCharacters
+    #@+node:ekr.20150514063305.346: *4* ec.swapCharacters & transeposeCharacters
     @cmd('transpose-chars')
     def transposeCharacters(self, event):
         '''Swap the characters at the cursor.'''
@@ -3512,37 +3514,8 @@ class EditCommandsClass(BaseEditCommandsClass):
         self.endCommand(changed=True, setLabel=True)
 
     swapCharacters = transposeCharacters
-    #@+node:ekr.20150514063305.347: *3* tabify & untabify (leoEditCommands)
-    @cmd('tabify')
-    def tabify(self, event):
-        '''Convert 4 spaces to tabs in the selected text.'''
-        self.tabifyHelper(event, which='tabify')
-
-    @cmd('untabify')
-    def untabify(self, event):
-        '''Convert tabs to 4 spaces in the selected text.'''
-        self.tabifyHelper(event, which='untabify')
-
-    def tabifyHelper(self, event, which):
-        w = self.editWidget(event)
-        if not w or not w.hasSelection():
-            return
-        self.beginCommand(w, undoType=which)
-        i, end = w.getSelectionRange()
-        txt = w.getSelectedText()
-        if which == 'tabify':
-            pattern = re.compile(' {4,4}') # Huh?
-            ntxt = pattern.sub('\t', txt)
-        else:
-            pattern = re.compile('\t')
-            ntxt = pattern.sub('    ', txt)
-        w.delete(i, end)
-        w.insert(i, ntxt)
-        n = i + len(ntxt)
-        w.setSelectionRange(n, n, insert=n)
-        self.endCommand(changed=True, setLabel=True)
-    #@+node:ekr.20150514063305.348: *3* uA's (leoEditCommands)
-    #@+node:ekr.20150514063305.349: *4* clearNodeUas & clearAllUas
+    #@+node:ekr.20150514063305.348: *3* ec: uA's
+    #@+node:ekr.20150514063305.349: *4* ec.clearNodeUas & clearAllUas
     @cmd('clear-node-uas')
     def clearNodeUas(self, event=None):
         '''Clear the uA's in the selected VNode.'''
@@ -3554,7 +3527,7 @@ class EditCommandsClass(BaseEditCommandsClass):
         '''Clear all uAs in the entire outline.'''
         for v in self.c.all_unique_nodes():
             v.u = {}
-    #@+node:ekr.20150514063305.350: *4* printUas & printAllUas
+    #@+node:ekr.20150514063305.350: *4* ec.printUas & printAllUas
     @cmd('print-all-uas')
     def printAllUas(self, event=None):
         '''Print all uA's in the outline.'''
@@ -3578,32 +3551,68 @@ class EditCommandsClass(BaseEditCommandsClass):
         for key in keys:
             pad = ' ' * (len(key) - n)
             g.es_print('    %s%s: %s' % (pad, key, d.get(key)))
-    #@+node:ekr.20150514063305.351: *4* setUa
+    #@+node:ekr.20150514063305.351: *4* ec.setUa
     @cmd('set-ua')
     def setUa(self, event):
         '''Prompt for the name and value of a uA, then set the uA in the present node.'''
+        k = self.c.k
+        self.w = self.editWidget(event)
+        if self.w:
+            k.setLabelBlue('Set uA: ')
+            k.get1Arg(event, handler=self.setUa1)
+
+    def setUa1(self, event):
+        k = self.c.k
+        self.uaName = k.arg
+        s = 'Set uA: %s To: ' % (self.uaName)
+        k.setLabelBlue(s)
+        k.getNextArg(self.setUa2)
+
+    def setUa2(self, event):
         c, k = self.c, self.c.k
-        tag = 'set-ua'
-        state = k.getState(tag)
-        if state == 0:
-            self.w = self.editWidget(event)
-            if self.w:
-                k.setLabelBlue('Set uA: ')
-                k.getArg(event, tag, 1, self.setUa)
-        elif state == 1:
-            self.uaName = k.arg
-            s = 'Set uA: %s To: ' % (self.uaName)
-            k.setLabelBlue(s)
-            k.getArg(event, tag, 2, self.setUa, completion=False)
-        else:
-            assert state == 2, state
-            val = k.arg
-            d = c.p.v.u
-            d[self.uaName] = val
-            self.printUas()
-            k.clearState()
-            k.resetLabel()
-            k.showStateAndMode()
+        val = k.arg
+        d = c.p.v.u
+        d[self.uaName] = val
+        self.printUas()
+        k.clearState()
+        k.resetLabel()
+        k.showStateAndMode()
     #@-others
+#@+node:ekr.20180210160930.1: ** @g.command('mark-first-parents')
+@g.command('mark-first-parents')
+def mark_first_parents(event):
+    '''Mark the node and all its parents.'''
+    c = event.get('c')
+    if not c:
+        return
+    changed = []
+    for parent in c.p.self_and_parents():
+        if not parent.isMarked():
+            parent.v.setMarked()
+            parent.setAllAncestorAtFileNodesDirty()
+            changed.append(parent.copy())
+    if changed:
+        # g.es("marked: " + ', '.join([z.h for z in changed]))
+        c.setChanged()
+        c.redraw()
+    return changed
+#@+node:ekr.20180210161001.1: ** @g.command('unmark-first-parents')
+@g.command('unmark-first-parents')
+def unmark_first_parents(event=None):
+    '''Mark the node and all its parents.'''
+    c = event.get('c')
+    if not c:
+        return
+    changed = []
+    for parent in c.p.self_and_parents():
+        if parent.isMarked():
+            parent.v.clearMarked()
+            parent.setAllAncestorAtFileNodesDirty()
+            changed.append(parent.copy())
+    if changed:
+        # g.es("unmarked: " + ', '.join([z.h for z in changed]))
+        c.setChanged()
+        c.redraw()
+    return changed
 #@-others
 #@-leo

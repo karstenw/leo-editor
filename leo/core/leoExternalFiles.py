@@ -7,6 +7,7 @@ import getpass
 import os
 import subprocess
 import tempfile
+import time
 #@+others
 #@+node:ekr.20160306110233.1: ** class ExternalFile
 class ExternalFile(object):
@@ -24,6 +25,16 @@ class ExternalFile(object):
         return '<ExternalFile: %20s %s>' % (self.time, g.shortFilename(self.path))
 
     __str__ = __repr__
+
+    #@+others
+    #@+node:ekr.20161011174757.1: *3* ef.shortFileName
+    def shortFileName(self):
+        return g.shortFilename(self.path)
+    #@+node:ekr.20161011174800.1: *3* ef.exists
+    def exists(self):
+        '''Return True if the external file still exists.'''
+        return g.os_path_exists(self.path)
+    #@-others
 #@+node:ekr.20150405073203.1: ** class ExternalFilesController
 class ExternalFilesController(object):
     '''
@@ -37,7 +48,6 @@ class ExternalFilesController(object):
     **Convention**:
 
     - d is always a dict created by the @open-with logic.
-      It would be difficult and pointless to change d.
 
     - ef is always an ExternalFiles instance.
     '''
@@ -55,10 +65,17 @@ class ExternalFilesController(object):
         self.has_changed_d = {}
             # Keys are commanders. Values are bools.
             # Used only to limit traces.
+        self.unchecked_commanders = []
+            # Copy of g.app.commanders()
+        self.unchecked_files = []
+            # Copy of self file. Only one files is checked at idle time.
         self._time_d = {}
             # Keys are full paths, values are modification times.
             # DO NOT alter directly, use set_time(path) and
             # get_time(path), see set_time() for notes.
+        self.yesno_all_time = 0  # previous yes/no to all answer, time of answer
+        self.yesno_all_answer = None  # answer, 'yes-all', or 'no-all'
+        g.app.idleTimeManager.add_callback(self.on_idle)
     #@+node:ekr.20150405105938.1: *3* efc.entries
     #@+node:ekr.20150405194745.1: *4* efc.check_overwrite (called from c.checkTimeStamp)
     def check_overwrite(self, c, path):
@@ -68,6 +85,11 @@ class ExternalFilesController(object):
         Return True if the file given by fn has not been changed
         since Leo read it or if the user agrees to overwrite it.
         '''
+        if c.sqlite_connection and c.mFileName == path:
+            # sqlite database file is never actually overwriten by Leo
+            # so no need to check its timestamp. It is modified through
+            # sqlite methods.
+            return True
         if self.has_changed(c, path):
             return self.ask(c, path)
         else:
@@ -114,23 +136,56 @@ class ExternalFilesController(object):
         if trace: g.trace(p.h, path)
         return path
     #@+node:ekr.20150330033306.1: *4* efc.on_idle & helpers
-    def on_idle(self, timer):
-        '''Check for changed files in all commanders.'''
-        trace = False and not g.unitTesting
-        if trace:
-            import time
-            t1 = time.time()
-        if g.app and not g.app.killed:
-            # First, check the open-with files.
-            for ef in self.files:
-                self.idle_check_open_with_file(ef)
-            # Next, check, all @<file> nodes in all commanders.
-            for c in g.app.commanders():
+    on_idle_count = 0
+
+    def on_idle(self):
+        '''
+        Check for changed open-with files and all external files in commanders
+        for which @bool check_for_changed_external_file is True.
+        '''
+        trace = False and not g.unitTesting and ((self.on_idle_count % 5) == 0)
+        trace_idle = True
+        if not g.app or g.app.killed:
+            return
+        t1 = time.time()
+        self.on_idle_count += 1
+        if 1:
+            # Fix #262: Improve performance of check_for_changed_external_files.
+            if self.unchecked_files:
+                # Check all external files.
+                for ef in self.unchecked_files:
+                    if trace: g.trace('check', ef.shortFileName())
+                    self.idle_check_open_with_file(ef)
+                self.unchecked_files = []
+            elif self.unchecked_commanders:
+                # Check the next commander for which
+                # @bool check_for_changed_external_file is True.
+                c = self.unchecked_commanders.pop()
+                if trace: g.trace('check', c.shortFileName())
                 self.idle_check_commander(c)
-        if trace:
+            else:
+                # Add all commanders for which
+                # @bool check_for_changed_external_file is True.
+                self.unchecked_commanders = [
+                    z for z in g.app.commanders() if self.is_enabled(z)
+                ]
+                self.unchecked_files = [z for z in self.files if z.exists()]
+        else:
+            # First, check all existing open-with files.
+            for ef in self.files: # A list of ExternalFile instances.
+                if ef.exists():
+                    self.idle_check_open_with_file(ef)
+            # Next, check all commanders for which
+            # @bool check_for_changed_external_file is True.
+            for c in g.app.commanders():
+                if self.is_enabled(c):
+                    self.idle_check_commander(c)
+        if trace and trace_idle:
             t2 = time.time()
-            n = len(list(g.app.commanders()))
-            g.trace('%s files %4.2f sec.' % (n, t2 - t1))
+            n1 = len([z for z in self.files if z.exists()])
+            n2 = len([z for z in g.app.commanders() if self.is_enabled(z)])
+            g.trace('(EFC) count: %3s files: %s commanders: %s time: %4.2f sec.' % (
+                self.on_idle_count, n1, n2, t2 - t1))
     #@+node:ekr.20150404045115.1: *5* efc.idle_check_commander
     def idle_check_commander(self, c):
         '''
@@ -138,9 +193,7 @@ class ExternalFilesController(object):
         changes.
         '''
         trace = False and not g.unitTesting
-        if not self.is_enabled(c) or g.unitTesting:
-            return
-        if trace: g.trace('checking',c.shortFileName())
+        if trace: g.trace('checking', c.shortFileName())
         p = c.rootPosition()
         seen = set()
         while p:
@@ -158,7 +211,7 @@ class ExternalFilesController(object):
         path = g.fullPath(c, p)
         if self.has_changed(c, path):
             if self.ask(c, path, p=p):
-                c.redraw_now(p=p)
+                c.redraw(p=p)
                 c.refreshFromDisk(p)
                 c.redraw()
             # Always update the path & time to prevent future warnings.
@@ -189,6 +242,9 @@ class ExternalFilesController(object):
                 c.selectPosition(p)
             if c.config.getBool('open_with_save_on_update'):
                 c.save()
+            else:
+                p.setDirty()
+                c.setChanged(True)
     #@+node:ekr.20150404082344.1: *4* efc.open_with & helper (called from c.openWith)
     def open_with(self, c, d):
         '''
@@ -219,8 +275,8 @@ class ExternalFilesController(object):
                     self.open_temp_file(c, d, fn)
                 else:
                     p = c.p
-                    d['ext'] = self.get_ext(c, p, ext)
-                    fn = self.open_with_helper(c, d, p)
+                    ext = self.get_ext(c, p, ext)
+                    fn = self.open_with_helper(c, ext, p)
                     if fn:
                         self.open_temp_file(c, d, fn)
             g.doHook('openwith2', c=c, p=c.p, v=c.p.v, d=d)
@@ -228,17 +284,14 @@ class ExternalFilesController(object):
             g.es('unexpected exception in c.openWith')
             g.es_exception()
     #@+node:ekr.20100203050306.5797: *5* efc.open_with_helper
-    def open_with_helper(self, c, d, p):
+    def open_with_helper(self, c, ext, p):
         '''
         Reopen a temp file for p if it exists in self.files.
         Otherwise, open a new temp file.
         '''
         trace = False and not g.unitTesting
-        assert isinstance(d, dict), d
-        # May be over-ridden by mod_tempfname plugin.
-        path = self.temp_file_path(c, p, d.get('ext'))
+        path = self.temp_file_path(c, p, ext)
         if not path:
-            # Check the mod_tempfname plugin.
             return g.error('c.temp_file_path failed')
         # Return a path if a temp file already refers to p.v
         for ef in self.files:
@@ -247,7 +300,7 @@ class ExternalFilesController(object):
                 return ef.path
         # Not found: create the temp file.
         if trace: g.trace('not found', path)
-        return self.create_temp_file(c, d, p)
+        return self.create_temp_file(c, ext, p)
             # May be None.
     #@+node:ekr.20150404092538.1: *4* efc.shut_down
     def shut_down(self):
@@ -271,6 +324,13 @@ class ExternalFilesController(object):
         Ask user whether to overwrite an @<file> tree.
         Return True if the user agrees.
         '''
+        if g.unitTesting:
+            return False
+
+        if self.yesno_all_time + 3 >= time.time() and self.yesno_all_answer:
+            self.yesno_all_time = time.time()  # Still reloading?  Extend time.
+            return bool('yes' in self.yesno_all_answer.lower())
+
         if not p:
             for ef in self.files:
                 if ef.path == path:
@@ -280,12 +340,23 @@ class ExternalFilesController(object):
                 where = 'the outline node'
         else:
             where = p.h
-        s = '\n'.join([
-            '%s has changed outside Leo.' % (g.splitLongFileName(path)),
-            'Overwrite %s?' % (where),
-        ])
-        result = g.app.gui.runAskYesNoDialog(c, 'Overwrite the Leo outline?', s)
-        return bool(result and result.lower() == 'yes')
+        _is_leo = path.endswith(('.leo', '.db'))
+        if _is_leo:
+            s = '\n'.join([
+                '%s has changed outside Leo.' %(g.splitLongFileName(path)),
+                'Overwrite it?'
+            ])
+        else:
+            s = '\n'.join([
+                '%s has changed outside Leo.' % (g.splitLongFileName(path)),
+                'Reload %s in Leo?' % (where),
+            ])
+        result = g.app.gui.runAskYesNoDialog(c, 'Overwrite the version in Leo?', s,
+            yes_all=not _is_leo, no_all=not _is_leo)
+        if result and "-all" in result.lower():
+            self.yesno_all_time = time.time()
+            self.yesno_all_answer = result.lower()
+        return bool(result and 'yes' in result.lower())
             # Careful: may be unit testing.
     #@+node:ekr.20150404052819.1: *4* efc.checksum
     def checksum(self, path):
@@ -293,22 +364,13 @@ class ExternalFilesController(object):
         import hashlib
         return hashlib.md5(open(path, 'rb').read()).hexdigest()
     #@+node:ekr.20100203050306.5937: *4* efc.create_temp_file
-    def create_temp_file(self, c, d, p):
+    def create_temp_file(self, c, ext, p):
         '''
         Create the temp file used by open-with if necessary.
         Add the corresponding ExternalFile instance to self.files
-
-        d is a dictionary created from an @openwith settings node.
-
-        'args':     the command-line arguments to be used to open the file.
-        'ext':      the file extension.
-        'kind':     the method used to open the file, such as subprocess.Popen.
-        'name':     menu label (used only by the menu code).
-        'shortcut': menu shortcut (used only by the menu code).
         '''
         trace = False and not g.unitTesting
-        assert isinstance(d, dict), d
-        ext = d.get('ext')
+        if trace: g.trace(len(p.b), p.h)
         path = self.temp_file_path(c, p, ext)
         exists = g.os_path_exists(path)
         if trace:
@@ -454,7 +516,7 @@ class ExternalFilesController(object):
             return True
     #@+node:ekr.20150405104340.1: *4* efc.is_enabled
     def is_enabled(self, c):
-        '''return cached @bool check_for_changed_external_file setting.'''
+        '''Return the cached @bool check_for_changed_external_file setting.'''
         trace = False and not g.unitTesting
         d = self.enabled_d
         val = d.get(c)
@@ -485,16 +547,36 @@ class ExternalFilesController(object):
         arg_tuple = d.get('args', [])
         arg = ' '.join(arg_tuple)
         kind = d.get('kind')
+        # This doesn't handle %ProgramFiles%
+            # if kind in ('os.spawnl', 'subprocess.Popen'):
+                # if not g.os_path_exists(arg):
+                    # g.trace('Executable not found', arg, arg_tuple)
+                    # return
         try:
             # All of these must be supported because they
             # could exist in @open-with nodes.
             command = '<no command>'
-            if kind == 'os.startfile':
-                command = 'os.startfile(%s)' % self.join(arg, fn)
-                if trace: g.trace(command)
-                # pylint: disable=no-member
-                # trust the user not to use this option on Linux.
-                if not testing: os.startfile(self.join(arg, fn))
+            if kind in ('os.system', 'os.startfile'):
+                # New in Leo 5.7: 
+                # Use subProcess.Popen(..., shell=True)
+                c_arg = self.join(arg, fn)
+                if trace:
+                    command = '%s -> subprocess.Popen(%s)' % (
+                        kind, g.shortFileName(c_arg))
+                    g.trace(command)
+                if not testing:
+                    try:
+                        subprocess.Popen(c_arg, shell=True)
+                    except OSError:
+                        g.es_print('c_arg', repr(c_arg))
+                        g.es_exception()
+                # Legacy code.
+                    # command = 'os.startfile(%s)' % self.join(arg, fn)
+                    # if trace: g.trace(command)
+                    # # pylint: disable=no-member
+                    # # trust the user not to use this option on Linux.
+                    # if not testing:
+                        # os.startfile(arg, fn)
             elif kind == 'exec':
                 g.es_print('open-with exec no longer valid.')
                 # command = 'exec(%s)' % self.join(arg,fn)
@@ -558,24 +640,24 @@ class ExternalFilesController(object):
         t = new_time or self.get_mtime(path)
         if trace: g.trace(t, path)
         self._time_d[g.os_path_realpath(path)] = t
-    #@+node:ekr.20031218072017.2832: *4* efc.temp_file_path
+    #@+node:ekr.20031218072017.2832: *4* efc.temp_file_path & helpers
     def temp_file_path(self, c, p, ext):
         '''Return the path to the temp file for p and ext.'''
         trace = False and not g.unitTesting
         if c.config.getBool('open_with_clean_filenames'):
-            path = self.clean_file_name(c, p, ext)
+            path = self.clean_file_name(c, ext, p)
         else:
-            path = self.legacy_file_name(c, p, ext)
+            path = self.legacy_file_name(c, ext, p)
         if trace: g.trace(p.h, path)
         return path
     #@+node:ekr.20150406055221.2: *5* efc.clean_file_name
-    def clean_file_name(self, c, p, ext):
+    def clean_file_name(self, c, ext, p):
         '''Compute the file name when subdirectories mirror the node's hierarchy in Leo.'''
         trace = False and not g.unitTesting
         use_extentions = c.config.getBool('open_with_uses_derived_file_extensions')
         ancestors, found = [], False
         for p2 in p.self_and_parents():
-            h = p.anyAtFileNodeName()
+            h = p2.anyAtFileNodeName()
             if not h:
                 h = p2.h # Not an @file node: use the entire header
             elif use_extentions and not found:
@@ -600,7 +682,7 @@ class ExternalFilesController(object):
         if trace: g.trace(path)
         return path
     #@+node:ekr.20150406055221.3: *5* efc.legacy_file_name
-    def legacy_file_name(self, c, p, ext):
+    def legacy_file_name(self, c, ext, p):
         '''Compute a legacy file name for unsupported operating systems.'''
         try:
             leoTempDir = getpass.getuser() + "_" + "Leo"

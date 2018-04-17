@@ -32,7 +32,7 @@ Terry Brown, Terry_N_Brown@yahoo.com, Fri Apr 19 16:33:45 2013
 """
 #@-<< docstring >>
 import leo.core.leoGlobals as g
-from leo.core.leoQt import QtCore, QtGui
+from leo.core.leoQt import isQt5, QtCore, QtGui
 import os
 import time
 #@+others
@@ -90,7 +90,13 @@ class Recorder(object):
         # self.times.append(time.time() - self.last_time)
         # self.last_time = time.time()
 
-        pm = QtGui.QPixmap.grabWindow(self.winId)
+        # pylint: disable=no-member
+        if isQt5:
+            # screen = QtGui.QtGuiApplication.primaryScreen()
+            screen = g.app.gui.qtApp.primaryScreen()
+            pm = screen.grabWindow(self.winId)
+        else:
+            pm = QtGui.QPixmap.grabWindow(self.winId)
 
         if False:
             # don't remove this code - all during dev. the above did

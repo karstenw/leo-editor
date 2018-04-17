@@ -6,256 +6,230 @@ The @auto importer for restructured text.
 This module must **not** be named rst, so as not to conflict with docutils.
 '''
 import leo.core.leoGlobals as g
-import leo.plugins.importers.basescanner as basescanner
+import leo.plugins.importers.linescanner as linescanner
+Importer = linescanner.Importer
+# Used by writers.leo_rst as well as in this file.
+underlines = '*=-^~"\'+!$%&(),./:;<>?@[\\]_`{|}#'
+    # All valid rst underlines, with '#' *last*, so it is effectively reserved.
 #@+others
-#@+node:ekr.20140723122936.18099: ** class RstScanner
-class RstScanner(basescanner.BaseScanner):
-    #@+others
-    #@+node:ekr.20140723122936.18100: *3*  __init__ (RstScanner)
-    def __init__(self, importCommands, atAuto):
+#@+node:ekr.20161127192007.2: ** class Rst_Importer
+class Rst_Importer(Importer):
+    '''The importer for the rst lanuage.'''
+
+    def __init__(self, importCommands, **kwargs):
+        '''Rst_Importer.__init__'''
         # Init the base class.
-        basescanner.BaseScanner.__init__(self, importCommands, atAuto=atAuto, language='rest')
-        # Scanner overrides
-        self.atAutoWarnsAboutLeadingWhitespace = True
-        self.blockDelim1 = self.blockDelim2 = None
-        self.classTags = []
-        self.escapeSectionRefs = False
-        self.functionSpelling = 'section'
-        self.functionTags = []
-        self.hasClasses = False
-        self.ignoreBlankLines = True
-        self.isRst = True
-        self.lineCommentDelim = '..'
-        self.outerBlockDelim1 = None
-        self.sigFailTokens = []
-        self.strict = False # Mismatches in leading whitespace are irrelevant.
-        # Ivars unique to rst scanning & code generation.
-        self.lastParent = None # The previous parent.
-        self.lastSectionLevel = 0 # The section level of previous section.
-        self.sectionLevel = 0 # The section level of the just-parsed section.
-        self.underlineCh = '' # The underlining character of the last-parsed section.
-        self.underlines = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~" # valid rst underlines.
-        self.underlines1 = [] # Underlining characters for underlines.
-        self.underlines2 = [] # Underlining characters for over/underlines.
-    #@+node:ekr.20140723122936.18101: *3* adjustParent (RstScanner)
-    def adjustParent(self, parent, headline):
-        '''Return the proper parent of the new node.'''
-        trace = False and not g.unitTesting
-        level, lastLevel = self.sectionLevel, self.lastSectionLevel
-        lastParent = self.lastParent
-        if trace: g.trace('**entry level: %s lastLevel: %s lastParent: %s' % (
-            level, lastLevel, lastParent and lastParent.h or '<none>'))
-        if self.lastParent:
-            if level <= lastLevel:
-                parent = lastParent.parent()
-                while level < lastLevel:
-                    level += 1
-                    parent = parent.parent()
-            else: # level > lastLevel.
-                level -= 1
-                parent = lastParent
-                while level > lastLevel:
-                    level -= 1
-                    h2 = '@rst-no-head %s' % headline
-                    body = ''
-                    parent = self.createFunctionNode(h2, body, parent)
-        else:
-            assert self.root
-            self.lastParent = self.root
-        if not parent:
-            parent = self.root
-        if trace: g.trace('level %s lastLevel %s %s returns %s' % (
-            level, lastLevel, headline, parent.h))
-        #self.lastSectionLevel = self.sectionLevel
-        self.lastParent = parent.copy()
-        return parent.copy()
-    #@+node:ekr.20140723122936.18102: *3* computeBody (RstScanner)
-    def computeBody(self, s, start, sigStart, codeEnd):
-        '''Compute the body of an rst node.'''
-        trace = False and not g.unitTesting
-        body1 = s[start: sigStart]
-        # Adjust start backwards to get a better undent.
-        if body1.strip():
-            while start > 0 and s[start - 1] in (' ', '\t'):
-                start -= 1
-        # Never indent any text; discard the entire signature.
-        body1 = s[start: sigStart]
-        body2 = s[self.sigEnd + 1: codeEnd]
-        body2 = g.removeLeadingBlankLines(body2) # 2009/12/28
-        body = body1 + body2
-        # Don't warn about missing tail newlines: they will be added.
-        if trace: g.trace('body: %s' % repr(body))
-        return body1, body2
-    #@+node:ekr.20140723122936.18103: *3* computeSectionLevel
-    def computeSectionLevel(self, ch, kind):
-        '''Return the section level of the underlining character ch.'''
-        if kind == 'over':
-            assert ch in self.underlines2
-            level = 0
-        else:
-            level = 1 + self.underlines1.index(ch)
-        if 0:
-            g.trace('level: %s kind: %s ch: %s under2: %s under1: %s' % (
-                level, kind, ch, self.underlines2, self.underlines1))
-        return level
-    #@+node:ekr.20140723122936.18104: *3* createDeclsNode
-    def createDeclsNode(self, parent, s):
-        '''Create a child node of parent containing s.'''
-        # Create the node for the decls.
-        headline = '@rst-no-head %s declarations' % self.methodName
-        body = self.undentBody(s)
-        self.createHeadline(parent, body, headline)
-    #@+node:ekr.20140723122936.18105: *3* endGen (RstScanner)
-    def endGen(self, s):
-        '''Remember the underlining characters in the root's uA.'''
-        trace = False and not g.unitTesting
-        p = self.root
-        if p:
-            tag = 'rst-import'
-            d = p.v.u.get(tag, {})
-            underlines1 = ''.join([str(z) for z in self.underlines1])
-            underlines2 = ''.join([str(z) for z in self.underlines2])
-            d['underlines1'] = underlines1
-            d['underlines2'] = underlines2
-            self.underlines1 = underlines1
-            self.underlines2 = underlines2
-            if trace: g.trace(repr(underlines1), repr(underlines2), g.callers(4))
-            p.v.u[tag] = d
-        # Append a warning to the root node.
-        warningLines = (
-            'Warning: this node is ignored when writing this file.',
-            'However, @ @rst-options are recognized in this node.',
+        Importer.__init__(self,
+            importCommands,
+            language = 'rest',
+            state_class = Rst_ScanState,
+            strict = False,
         )
-        lines = ['.. %s' % (z) for z in warningLines]
-        warning = '\n%s\n' % '\n'.join(lines)
-        self.root.b = self.root.b + warning
-    #@+node:ekr.20140723122936.18106: *3* isUnderLine
-    def isUnderLine(self, s):
-        '''Return True if s consists of only the same rST underline character.'''
-        if not s: return False
-        ch1 = s[0]
-        if ch1 not in self.underlines:
-            return False
-        for ch in s:
-            if ch != ch1:
-                return False
-        return True
-    #@+node:ekr.20140723122936.18107: *3* startsComment/ID/String
-    # These do not affect parsing.
 
-    def startsComment(self, s, i):
-        return False
-
-    def startsID(self, s, i):
-        return False
-
-    def startsString(self, s, i):
-        return False
-    #@+node:ekr.20140723122936.18108: *3* startsHelper (RstScanner)
-    def startsHelper(self, s, i, kind, tags, tag=None):
-        '''return True if s[i:] starts an rST section.
-        Sets sigStart, sigEnd, sigId and codeEnd ivars.'''
-        trace = False and not g.unitTesting
-        verbose = True
-        kind, name, next, ch = self.startsSection(s, i)
-        if kind == 'plain': return False
-        self.underlineCh = ch
-        self.lastSectionLevel = self.sectionLevel
-        self.sectionLevel = self.computeSectionLevel(ch, kind)
-        self.sigStart = g.find_line_start(s, i)
-        self.sigEnd = next
-        self.sigId = name
-        i = next + 1
-        if trace: g.trace('sigId', self.sigId, 'next', next)
-        while i < len(s):
-            progress = i
-            i, j = g.getLine(s, i)
-            kind, name, next, ch = self.startsSection(s, i)
-            if trace and verbose: g.trace(kind, repr(s[i: j]))
-            if kind in ('over', 'under'):
-                break
-            else:
-                i = j
-            assert i > progress
-        self.codeEnd = i
-        if trace:
-            if verbose:
-                g.trace('found...\n%s' % s[self.sigStart: self.codeEnd])
-            else:
-                g.trace('level %s %s' % (self.sectionLevel, self.sigId))
-        return True
-    #@+node:ekr.20140723122936.18109: *3* startsSection & helper
-    def startsSection(self, s, i):
-        '''Scan a line and possible one or two other lines,
-        looking for an underlined or overlined/underlined name.
-
-        Return (kind,name,i):
-            kind: in ('under','over','plain')
-            name: the name of the underlined or overlined line.
-            i: the following character if kind is not 'plain'
-            ch: the underlining and possibly overlining character.
+    #@+others
+    #@+node:ekr.20161204032455.1: *3* rst_i.check
+    def check(self, unused_s, parent):
         '''
-        trace = False and not g.unitTesting
-        verbose = False
-        # Under/overlines can not begin with whitespace.
-        i1, j, nows, line = self.getLine(s, i)
-        ch, kind = '', 'plain' # defaults.
-        if nows and self.isUnderLine(line): # an overline.
-            name_i = g.skip_line(s, i1)
-            name_i, name_j = g.getLine(s, name_i)
-            name = s[name_i: name_j].strip()
-            next_i = g.skip_line(s, name_i)
-            i, j, nows, line2 = self.getLine(s, next_i)
-            n1, n2, n3 = len(line), len(name), len(line2)
-            ch1, ch3 = line[0], line2 and line2[0]
-            ok = (nows and self.isUnderLine(line2) and
-                n1 >= n2 and n2 > 0 and n3 >= n2 and ch1 == ch3)
-            if ok:
-                i += n3
-                ch, kind = ch1, 'over'
-                if ch1 not in self.underlines2:
-                    self.underlines2.append(ch1)
-                    if trace: g.trace('*** underlines2', self.underlines2, name)
-                if trace and verbose:
-                    g.trace('\nline  %s\nname  %s\nline2 %s' % (
-                        repr(line), repr(name), repr(line2))) #,'\n',g.callers(4))
+        Suppress perfect-import checks for rST.
+
+        There is no reason to retain specic underlinings, nor is there any
+        reason to prevent the writer from inserting conditional newlines.
+        '''
+        return True
+    #@+node:ekr.20161129040921.2: *3* rst_i.gen_lines & helpers
+    def gen_lines(self, s, parent):
+        '''Node generator for reStructuredText importer.'''
+        trace = False and g.unitTesting
+        if not s or s.isspace():
+            return
+        self.inject_lines_ivar(parent)
+        # We may as well do this first.  See note below.
+        self.stack = [parent]
+        skip = 0
+        lines = g.splitLines(s)
+        for i, line in enumerate(lines):
+            if trace: g.trace('%2s %r' % (i+1, line))
+            if skip > 0:
+                skip -= 1
+            elif self.is_lookahead_overline(i, lines):
+                level = self.ch_level(line[0])
+                self.make_node(level, lines[i+1])
+                skip = 2
+            elif self.is_lookahead_underline(i, lines):
+                level = self.ch_level(lines[i+1][0])
+                self.make_node(level, line)
+                skip = 1
+            elif i == 0:
+                p = self.make_dummy_node('!Dummy chapter')
+                self.add_line(p, line)
+            else:
+                p = self.stack[-1]
+                self.add_line(p, line)
+    #@+node:ekr.20161129040921.5: *4* rst_i.find_parent
+    def find_parent(self, level, h):
+        '''
+        Return the parent at the indicated level, allocating
+        place-holder nodes as necessary.
+        '''
+        trace = False and g.unitTesting
+        trace_stack = True
+        assert level > 0
+        if trace: g.trace('===== level: %s len(stack): %s h: %s' % (
+            level, len(self.stack), h))
+        while level < len(self.stack):
+            p = self.stack.pop()
+            if trace:
+                g.trace('POP', len(self.get_lines(p)), p.h)
+                if trace and trace_stack:
+                    self.print_list(self.get_lines(p))
+        # Insert placeholders as necessary.
+        # This could happen in imported files not created by us.
+        while level > len(self.stack):
+            top = self.stack[-1]
+            if trace: g.trace('PLACE HOLDER', top.h)
+            child = self.create_child_node(
+                parent = top,
+                body = None,
+                headline = 'placeholder',
+            )
+            self.stack.append(child)
+        # Create the desired node.
+        top = self.stack[-1]
+        if trace: g.trace('TOP', top.h)
+        child = self.create_child_node(
+            parent = top,
+            body = None,
+            headline = h, # Leave the headline alone
+        )
+        self.stack.append(child)
+        if trace and trace_stack: self.print_stack(self.stack)
+        return self.stack[level]
+    #@+node:ekr.20161129111503.1: *4* rst_i.is_lookahead_overline
+    def is_lookahead_overline(self, i, lines):
+        '''True if lines[i:i+2] form an overlined/underlined line.'''
+        if i + 2 < len(lines):
+            line0 = lines[i]
+            line1 = lines[i+1]
+            line2 = lines[i+2]
+            ch0 = self.is_underline(line0, extra='#')
+            ch1 = self.is_underline(line1)
+            ch2 = self.is_underline(line2, extra='#')
+            return (
+                ch0 and ch2 and ch0 == ch2 and
+                not ch1 and
+                len(line1) >= 4 and
+                len(line0) >= len(line1) and
+                len(line2) >= len(line1)
+            )
         else:
-            name = line.strip()
-            i = g.skip_line(s, i1)
-            i, j, nows2, line2 = self.getLine(s, i)
-            n1, n2 = len(name), len(line2)
-            # look ahead two lines.
-            i3, j3 = g.getLine(s, j)
-            name2 = s[i3: j3].strip()
-            i4, j4, nows4, line4 = self.getLine(s, j3)
-            n3, n4 = len(name2), len(line4)
-            overline = (
-                nows2 and self.isUnderLine(line2) and
-                nows4 and self.isUnderLine(line4) and
-                n3 > 0 and n2 >= n3 and n4 >= n3)
-            ok = (not overline and nows2 and self.isUnderLine(line2) and
-                n1 > 0 and n2 >= n1)
-            if ok:
-                i += n2
-                ch, kind = line2[0], 'under'
-                if ch not in self.underlines1:
-                    self.underlines1.append(ch)
-                    if trace: g.trace('*** underlines1', self.underlines1, name)
-                if trace and verbose: g.trace('\nname  %s\nline2 %s' % (
-                    repr(name), repr(line2)))
-        return kind, name, i, ch
-    #@+node:ekr.20140723122936.18110: *4* getLine
-    def getLine(self, s, i):
-        i, j = g.getLine(s, i)
-        line = s[i: j]
-        nows = i == g.skip_ws(s, i)
-        line = line.strip()
-        return i, j, nows, line
+            return False
+    #@+node:ekr.20161129112703.1: *4* rst_i.is_lookahead_underline
+    def is_lookahead_underline(self, i, lines):
+        '''True if lines[i:i+1] form an underlined line.'''
+        if i + 1 < len(lines):
+            line0 = lines[i]
+            line1 = lines[i+1]
+            ch0 = self.is_underline(line0)
+            ch1 = self.is_underline(line1)
+            return not line0.isspace() and not ch0 and ch1 and 4 <= len(line1)
+        else:
+            return False
+    #@+node:ekr.20161129040921.8: *4* rst_i.is_underline
+    def is_underline(self, line, extra=None):
+        '''True if the line consists of nothing but the same underlining characters.'''
+        trace = False and g.unitTesting
+        if trace: g.trace(repr(line))
+        if line.isspace():
+            return None
+        chars = underlines
+        if extra: chars = chars + extra
+        ch1 = line[0]
+        if ch1 not in chars:
+            return None
+        for ch in line.rstrip():
+            if ch != ch1:
+                return None
+        return ch1
+
+    #@+node:ekr.20161129040921.6: *4* rst_i.make_dummy_node
+    def make_dummy_node(self, headline):
+        '''Make a decls node.'''
+        parent = self.stack[-1]
+        assert parent == self.root, repr(parent)
+        child = self.create_child_node(
+            parent = self.stack[-1],
+            body = None,
+            headline = headline,
+        )
+        self.stack.append(child)
+        return child
+    #@+node:ekr.20161129040921.7: *4* rst_i.make_node
+    def make_node(self, level, headline):
+        '''Create a new node, with the given headline.'''
+        self.find_parent(level=level, h=headline)
+    #@+node:ekr.20161129045020.1: *4* rst_i.ch_level
+    rst_seen = {}
+        # Fix # 430. Per RagBlufThim.
+        # Was {'#': 1,}
+    rst_level = 0 # A trick.
+
+    def ch_level(self, ch):
+        '''Return the underlining level associated with ch.'''
+        assert ch in underlines, (repr(ch), g.callers())
+        d = self.rst_seen
+        if ch in d:
+            return d.get(ch)
+        else:
+            self.rst_level += 1
+            d[ch] = self.rst_level
+            return self.rst_level
+    #@+node:ekr.20161129040921.11: *3* rst_i.post_pass
+    def post_pass(self, parent):
+        '''A do-nothing post-pass for markdown.'''
+    #@-others
+#@+node:ekr.20161127192007.6: ** class Rst_ScanState
+class Rst_ScanState:
+    '''A class representing the state of the rst line-oriented scan.'''
+
+    def __init__(self, d=None):
+        '''Rst_ScanState.__init__'''
+        if d:
+            prev = d.get('prev')
+            self.context = prev.context
+        else:
+            self.context = ''
+
+    def __repr__(self):
+        '''Rst_ScanState.__repr__'''
+        return "Rst_ScanState context: %r " % (self.context)
+
+    __str__ = __repr__
+
+    #@+others
+    #@+node:ekr.20161127192007.7: *3* rst_state.level
+    def level(self):
+        '''Rst_ScanState.level.'''
+        return 0
+
+    #@+node:ekr.20161127192007.8: *3* rst_state.update
+    def update(self, data):
+        '''
+        Rst_ScanState.update
+
+        Update the state using the 6-tuple returned by i.scan_line.
+        Return i = data[1]
+        '''
+        context, i, delta_c, delta_p, delta_s, bs_nl = data
+        # All ScanState classes must have a context ivar.
+        self.context = context
+        return i
     #@-others
 #@-others
 importer_dict = {
-    '@auto': ['@auto-rst',],
-    'class': RstScanner,
-    'extensions': ['.rst', '.rest',],
+    '@auto': ['@auto-rst',], # Fix #392: @auto-rst file.txt: -rst ignored on read
+    'class': Rst_Importer,
+    'extensions': ['.rst', '.rest'],
 }
+#@@language python
+#@@tabwidth -4
 #@-leo

@@ -10,15 +10,7 @@ Scoring is based on how much you edit the nodes.
 '''
 
 # By VMV.
-#@+<< imports >>
-#@+node:ville.20120503224623.3577: ** << imports >>
-# import sys
 import leo.core.leoGlobals as g
-
-# from PyQt4.QtCore import *
-# from PyQt4.QtGui import *
-# from PyQt4.QtWebKit import *
-#@-<< imports >>
 #@+others
 #@+node:ville.20120503224623.3578: ** init
 def init ():
@@ -56,7 +48,7 @@ class MylynController(object):
         for v in ns:
             self.add_score(v, 1)
 
-    #@+node:ekr.20160519050823.6: *3* set_handlers
+    #@+node:ekr.20160519050823.6: *3* set_handlers (leomylyn.py)
     def set_handlers(self):
 
         g.registerHandler("childrenModified", self.children_hnd)

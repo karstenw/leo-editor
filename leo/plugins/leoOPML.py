@@ -138,18 +138,24 @@ class NodeClass(object):
 class OpmlController(object):
     '''The controller class for this plugin.'''
     #@+others
-    #@+node:ekr.20060904103412.7: *3* oc.__init__
+    #@+node:ekr.20060904103412.7: *3* oc.__init__& reloadSettings
     def __init__(self, c):
         '''Ctor for OpmlController class.'''
         self.c = c
         c.opmlCommands = self
-        c.k.registerCommand('read-opml-file', None, self.readOpmlCommand, pane='all', verbose=False)
-        c.k.registerCommand('write-opml-file', None, self.writeOpmlCommand, pane='all', verbose=False)
-        self.opml_read_derived_files = c.config.getBool('opml_read_derived_files')
-        self.opml_write_derived_files = c.config.getBool('opml_write_derived_files')
+        c.k.registerCommand('read-opml-file', self.readOpmlCommand)
+        c.k.registerCommand('write-opml-file', self.writeOpmlCommand)
         self.currentVnode = None
         self.topVnode = None
         self.generated_gnxs = {} # Keys are gnx's (strings).  Values are vnodes.
+        self.reloadSettings()
+        
+    def reloadSettings(self):
+        c = self.c
+        c.registerReloadSettings(self)
+        self.opml_read_derived_files = c.config.getBool('opml_read_derived_files')
+        self.opml_write_derived_files = c.config.getBool('opml_write_derived_files')
+
     #@+node:ekr.20060914163456: *3* oc.createVnodes & helpers
     def createVnodes(self, c, dummyRoot):
         '''**Important**: this method and its helpers are low-level code
@@ -349,7 +355,7 @@ class OpmlController(object):
             filetypes=[("OPML files", "*.opml"), ("All files", "*")],
             defaultextension=".opml")
         c.bringToFront()
-        if fileName and len(fileName) > 0:
+        if fileName:
             self.readFile(fileName)
         else:
             c.bodyWantsFocus()
@@ -633,7 +639,7 @@ class SaxContentHandler(xml.sax.saxutils.XMLGenerator):
                 indent,
                 self.clean(name).strip()))
         if name.lower() in ['outline', 'head', 'body',]:
-            print
+            print('')
     #@+node:ekr.20060904134958.168: *5* attrsToString
     def attrsToString(self, attrs, sep='\n'):
         '''Convert the attributes to a string.
@@ -651,7 +657,7 @@ class SaxContentHandler(xml.sax.saxutils.XMLGenerator):
         return g.toEncodedString(s, "ascii")
     #@+node:ekr.20060904134958.174: *3*  Do nothing...
     #@+node:ekr.20060904134958.175: *4* other methods
-    def ignorableWhitespace(self, ws):
+    def ignorableWhitespace(self, content):
         g.trace()
 
     def processingInstruction(self, target, data):
@@ -673,7 +679,7 @@ class SaxContentHandler(xml.sax.saxutils.XMLGenerator):
         pass
     #@+node:ekr.20060904134958.178: *3* characters
     def characters(self, content):
-        name = self.elementStack and self.elementStack[-1].lower() or '<no element name>'
+        name = self.elementStack[-1].lower() if self.elementStack else '<no element name>'
         # Opml elements should not have content: everything is carried in attributes.
         if name == 'leo:body':
             if self.node:

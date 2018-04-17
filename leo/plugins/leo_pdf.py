@@ -268,13 +268,16 @@ try:
 except ImportError:
     print('leo_pdf.py: can not import reportlab.lib styles info')
     stylesheet = None
+    StyleSheet1 = ParagraphStyle = None
     # raise
 if g.isPython3:
     import io
     StringIO = io.StringIO
 else:
+    # pylint: disable=no-member
     import StringIO
-import types
+    StringIO = StringIO.StringIO
+# import types
 #@-<< imports >>
 #@+others
 #@+node:ekr.20140920145803.17996: ** top-level functions
@@ -294,41 +297,31 @@ def init ():
 
 def getStyleSheet():
     """Returns a stylesheet object"""
+    if not StyleSheet1 or not ParagraphStyle:
+        return None
     stylesheet = StyleSheet1()
-
     stylesheet.add(ParagraphStyle(name='Normal',
                                   fontName='Times-Roman',
                                   fontSize=10,
                                   leading=12,
                                   spaceBefore=4,
-                                  spaceAfter=4)
-                   )
-
+                                  spaceAfter=4))
     stylesheet.add(ParagraphStyle(name='DocInfo',
                                   parent=stylesheet['Normal'],
                                   leading=12,
                                   spaceBefore=0,
-                                  spaceAfter=0)
-                   )
-
+                                  spaceAfter=0))
     stylesheet.add(ParagraphStyle(name='Comment',
-                                  fontName='Times-Italic')
-                   )
-
+                                  fontName='Times-Italic'))
     stylesheet.add(ParagraphStyle(name='Indent1',
                                   leftIndent=36,
-                                  firstLineIndent=0)
-                   )
-
+                                  firstLineIndent=0))
     stylesheet.add(ParagraphStyle(name='BodyText',
                                   parent=stylesheet['Normal'],
-                                  spaceBefore=6)
-                   )
+                                  spaceBefore=6))
     stylesheet.add(ParagraphStyle(name='Italic',
                                   parent=stylesheet['BodyText'],
-                                  fontName = 'Times-Italic')
-                   )
-
+                                  fontName = 'Times-Italic'))
     stylesheet.add(ParagraphStyle(name='Heading1',
                                   parent=stylesheet['Normal'],
                                   fontName = 'Times-Bold',
@@ -337,7 +330,6 @@ def getStyleSheet():
                                   spaceBefore=10,
                                   spaceAfter=6),
                    alias='h1')
-
     stylesheet.add(ParagraphStyle(name='Heading2',
                                   parent=stylesheet['Normal'],
                                   fontName = 'Times-Bold',
@@ -346,7 +338,6 @@ def getStyleSheet():
                                   spaceBefore=10,
                                   spaceAfter=6),
                    alias='h2')
-
     stylesheet.add(ParagraphStyle(name='Heading3',
                                   parent=stylesheet['Normal'],
                                   fontName = 'Times-BoldItalic',
@@ -355,7 +346,6 @@ def getStyleSheet():
                                   spaceBefore=10,
                                   spaceAfter=6),
                    alias='h3')
-
     stylesheet.add(ParagraphStyle(name='Heading4',
                                   parent=stylesheet['Normal'],
                                   fontName = 'Times-BoldItalic',
@@ -364,7 +354,6 @@ def getStyleSheet():
                                   spaceBefore=8,
                                   spaceAfter=4),
                    alias='h4')
-
     stylesheet.add(ParagraphStyle(name='Heading5',
                                   parent=stylesheet['Normal'],
                                   fontName = 'Times-BoldItalic',
@@ -373,7 +362,6 @@ def getStyleSheet():
                                   spaceBefore=8,
                                   spaceAfter=4),
                    alias='h5')
-
     stylesheet.add(ParagraphStyle(name='Heading6',
                                   parent=stylesheet['Normal'],
                                   fontName = 'Times-BoldItalic',
@@ -382,7 +370,6 @@ def getStyleSheet():
                                   spaceBefore=8,
                                   spaceAfter=4),
                    alias='h6')
-
     stylesheet.add(ParagraphStyle(name='Title',
                                   parent=stylesheet['Normal'],
                                   fontName = 'Times-Bold',
@@ -392,7 +379,6 @@ def getStyleSheet():
                                   alignment=TA_CENTER
                                   ),
                    alias='title')
-
     stylesheet.add(ParagraphStyle(name='Subtitle',
                                   parent=stylesheet['Normal'],
                                   fontName = 'Times-Bold',
@@ -402,7 +388,6 @@ def getStyleSheet():
                                   alignment=TA_CENTER
                                   ),
                    alias='subtitle')
-
     stylesheet.add(ParagraphStyle(name='TopicTitle',
                                   parent=stylesheet['Normal'],
                                   fontName = 'Times-Bold',
@@ -411,7 +396,6 @@ def getStyleSheet():
                                   spaceAfter=6,
                                   ),
                    alias='topic-title')
-
     for i in range(0, 15):
         indent = 18*i
         stylesheet.add(ParagraphStyle(name='TopicItem%s' % i,
@@ -423,7 +407,6 @@ def getStyleSheet():
                                   spaceAfter=0,
                                   ),
                    alias='topic-item-%s' % i)
-
     stylesheet.add(ParagraphStyle(name='UnorderedList',
                                   parent=stylesheet['Normal'],
                                   firstLineIndent=0,
@@ -432,7 +415,6 @@ def getStyleSheet():
                                   spaceBefore=0,
                                   bulletFontName='Symbol'),
                    alias='ul')
-
     stylesheet.add(ParagraphStyle(name='Definition',
                                   parent=stylesheet['Normal'],
                                   firstLineIndent=0,
@@ -442,11 +424,9 @@ def getStyleSheet():
                                   spaceBefore=2,
                                   bulletFontName='Times-BoldItalic'),
                    alias='dl')
-
     stylesheet.add(ParagraphStyle(name='OrderedList',
                                   parent=stylesheet['Definition']),
                    alias='ol')
-
     stylesheet.add(ParagraphStyle(name='Code',
                                   parent=stylesheet['Normal'],
                                   fontName='Courier',
@@ -455,44 +435,37 @@ def getStyleSheet():
                                   leading=8.8,
                                   leftIndent=36,
                                   firstLineIndent=0))
-
     stylesheet.add(ParagraphStyle(name='FunctionHeader',
                                   parent=stylesheet['Normal'],
                                   fontName='Courier-Bold',
                                   fontSize=8,
                                   leading=8.8))
-
     stylesheet.add(ParagraphStyle(name='DocString',
                                   parent=stylesheet['Normal'],
                                   fontName='Courier',
                                   fontSize=8,
                                   leftIndent=18,
                                   leading=8.8))
-
     stylesheet.add(ParagraphStyle(name='DocStringIndent',
                                   parent=stylesheet['Normal'],
                                   fontName='Courier',
                                   fontSize=8,
                                   leftIndent=36,
                                   leading=8.8))
-
     stylesheet.add(ParagraphStyle(name='URL',
                                   parent=stylesheet['Normal'],
                                   fontName='Courier',
                                   textColor=colors.navy,
                                   alignment=TA_CENTER),
                    alias='u')
-
     stylesheet.add(ParagraphStyle(name='Centred',
                                   parent=stylesheet['Normal'],
                                   alignment=TA_CENTER
                                   ))
-
     stylesheet.add(ParagraphStyle(name='Caption',
                                   parent=stylesheet['Centred'],
                                   fontName='Times-Italic'
                                   ))
-
     return stylesheet
 #@+node:ekr.20111106070228.12430: *3* get_language
 def get_language (doctree):
@@ -617,7 +590,8 @@ if docutils:
                 self.styleSheet = visitor.styleSheet
                 self.encode = visitor.encode
             if reportlab:
-                out = StringIO.StringIO()
+                # out = StringIO.StringIO()
+                out = StringIO()
                 reportlab.platypus.SimpleDocTemplate(out,
                     pagesize=reportlab.lib.pagesizes.A4)
                 # The 'real' code is doc.build(story)
@@ -630,7 +604,8 @@ if docutils:
 
             if reportlab:
 
-                out = StringIO.StringIO()
+                # out = StringIO.StringIO()
+                out = StringIO()
 
                 doc = reportlab.platypus.SimpleDocTemplate(out,
                     pagesize=reportlab.lib.pagesizes.A4)
@@ -1030,7 +1005,7 @@ if docutils: # NOQA
                 # g.trace('attlist element:',repr(name),repr(value))
                 if value is None: # boolean attribute
                     parts.append(name.lower().strip())
-                elif isinstance(value,types.ListType):
+                elif g.isList(value):
                     values = [str(v) for v in value]
                     val = ' '.join(values).strip()
                     parts.append('%s="%s"' % (
@@ -1138,7 +1113,7 @@ if docutils: # NOQA
             for nkey in nkeys:
                 if nkey in keys:
                     val = d.get(nkey)
-                    g.pr(nkey,':',g.toString(val,verbose=False,indent='\t'))
+                    g.pr(nkey,':',g.toString(val,indent='\t'))
 
             g.pr('\ndone', '-' * 25)
         #@+node:ekr.20090704103932.5220: *4* encode (PDFTranslator) (No longer used)

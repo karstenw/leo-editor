@@ -52,7 +52,13 @@ def init():
     fileName = os.path.join(g.app.loadDir,"../","plugins","expfolder.ini")
     config = ConfigParser.ConfigParser()
     config.read(fileName)
-    textexts.extend(config.get("Main", "TextExtensions").split())
+    # pylint: disable=no-member
+    # config.get returns a string.
+    try:
+        texts = config.get("Main", "TextExtensions").split()
+        textexts.extend(texts)
+    except ConfigParser.NoSectionError:
+        pass
     return True
 #@+node:ajones.20070122153625.2: ** on_icondclick
 def on_icondclick(tag, keywords):

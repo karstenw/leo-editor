@@ -161,7 +161,7 @@ class TstNode(object):
         s = ("\nsection: " + self.name +
             ", referenced:" + str(self.referenced) +
             ", is root:" + str(self.is_root))
-        if len(self.parts) > 0:
+        if self.parts:
             s += "\n----- parts of " + g.angleBrackets(self.name)
             n = 1 # part list is in numeric order
             for part in self.parts:
@@ -330,12 +330,10 @@ class BaseTangleCommands(object):
                     [^\n]*\n
                 )
             )*'''         , re.VERBOSE)
-    #@+node:ekr.20031218072017.3466: *3* tangle.__init__
+    #@+node:ekr.20031218072017.1356: *3* tangle.Birth
     def __init__(self, c):
         self.c = c
         self.init_ivars()
-    #@+node:ekr.20031218072017.1356: *3* tangle.init_ivars & init_directive_ivars
-    # Called by __init__
 
     def init_ivars(self):
         c = self.c
@@ -401,6 +399,7 @@ class BaseTangleCommands(object):
         self.string1 = self.string2 = self.verbatim = None
         self.message = None # forgiving compare message.
         #@-<< init untangle ivars >>
+
     # Called by scanAllDirectives
 
     def init_directive_ivars(self):
@@ -410,11 +409,11 @@ class BaseTangleCommands(object):
         # Global options
         self.page_width = c.page_width
         self.tab_width = c.tab_width
-        # New in Leo 4.5: get these from settings.
-        self.output_doc_flag = c.config.getBool('output_doc_flag')
-        self.tangle_batch_flag = c.config.getBool('tangle_batch_flag')
-        self.untangle_batch_flag = c.config.getBool('untangle_batch_flag')
-        self.use_header_flag = c.config.getBool('use_header_flag')
+        # Get settings from reload_settings.
+        self.output_doc_flag = False
+        self.tangle_batch_flag = False
+        self.untangle_batch_flag = False
+        self.use_header_flag = False
         # Default tangle options.
         self.tangle_directory = None # Initialized by scanAllDirectives
         # Default tangle language
@@ -436,6 +435,15 @@ class BaseTangleCommands(object):
         self.encoding = c.config.default_derived_file_encoding # 2/21/03
         self.output_newline = g.getOutputNewline(c=c) # 4/24/03: initialize from config settings.
         #@-<< init directive ivars >>
+        
+    def reload_settings(self):
+        c = self.c
+        self.output_doc_flag = c.config.getBool('output_doc_flag')
+        self.tangle_batch_flag = c.config.getBool('tangle_batch_flag')
+        self.untangle_batch_flag = c.config.getBool('untangle_batch_flag')
+        self.use_header_flag = c.config.getBool('use_header_flag')
+        
+    reloadSettings = reload_settings
     #@+node:ekr.20031218072017.3467: *3* top level
     #@+at Only top-level drivers initialize ivars.
     #@+node:ekr.20031218072017.3468: *4* cleanup
@@ -1262,7 +1270,7 @@ class BaseTangleCommands(object):
                 #@+<< Write a banner at the start of the output file >>
                 #@+node:ekr.20031218072017.1154: *6* <<Write a banner at the start of the output file>>
                 # a root section must have at least one part
-                assert len(section.parts) > 0
+                assert section.parts
                 delims = section.parts[0].delims
                 if delims[0]:
                     self.os(delims[0])
@@ -1633,9 +1641,7 @@ class BaseTangleCommands(object):
                                 self.oblank()
                                 self.os("(%d of %d)" % (count, sections))
                         else:
-                            assert(
-                                part.delims[1] and len(part.delims[1]) > 0 and
-                                part.delims[2] and len(part.delims[2]) > 0)
+                            assert part.delims[1] and part.delims[2]
                             self.os(part.delims[1]); self.oblank(); self.os(name)
                             # put (n of m)
                             if sections > 1:
@@ -1741,7 +1747,7 @@ class BaseTangleCommands(object):
             if verbose_flag:
                 s += self.st_dump_node(section)
             else:
-                theType = "  " if len(section.parts) > 0 else "un"
+                theType = "  " if section.parts else "un"
                 s += ("\n" + theType + "defined:[" + section.name + "]")
             s += "\nsection delims: " + repr(section.delims)
         return s
@@ -1771,8 +1777,8 @@ class BaseTangleCommands(object):
             if self.print_mode != "silent": # @silent supresses newline processing.
                 i = g.skip_blank_lines(code, 0) # remove leading lines.
                 if i > 0: code = code[i:]
-                if code and len(code) > 0: code = code.rstrip() # remove trailing lines.
-            if len(code) == 0: code = None
+                if code: code = code.rstrip() # remove trailing lines.
+            if not code: code = None
         if self.tangling and code:
             #@+<< check for duplicate code definitions >>
             #@+node:ekr.20031218072017.3533: *5* <<check for duplicate code definitions >>
@@ -2329,11 +2335,11 @@ class BaseTangleCommands(object):
                 # lines, the present section name must match the name on the top of the
                 # stack.
                 #@@c
-                if len(self.def_stack) > 0:
+                if self.def_stack:
                     dn = self.def_stack[-1]
                     if self.compare_section_names(name, dn.name):
                         dn = self.def_stack.pop()
-                        if len(dn.code) > 0:
+                        if dn.code:
                             thePart, found = self.ust_lookup(name, dn.part, False, False) # not root, not update
                             # Check for incompatible previous definition.
                             if found and not self.forgiving_compare(name, dn.part, dn.code, thePart.code):
@@ -2376,7 +2382,7 @@ class BaseTangleCommands(object):
                             self.copy(s[end])
                             end += 1
                     # Restore the old indentation level.
-                    if len(self.def_stack) > 0:
+                    if self.def_stack:
                         indent = self.def_stack[-1].indent
                     self.select_next_sentinel(part_start_flag=False)
                 # g.trace(repr(self.def_stack))
@@ -2440,14 +2446,14 @@ class BaseTangleCommands(object):
         #@+node:ekr.20031218072017.3572: *5* << end all open sections >>
         # g.trace("end all open sections")
         dn = None
-        while len(self.def_stack) > 0:
+        while self.def_stack:
             dn = self.def_stack.pop()
-            if len(self.def_stack) > 0:
+            if self.def_stack:
                 self.error("Unterminated section: " + dn.name)
         if dn:
             # Terminate the root setcion.
             i = len(s)
-            if dn.code and len(dn.code) > 0:
+            if dn.code:
                 self.ust_enter(dn.name, dn.part, dn.of, dn.code, dn.nl_flag, is_root_flag=True)
             else:
                 self.error("Missing root part")
@@ -2498,7 +2504,7 @@ class BaseTangleCommands(object):
             else:
                 s = self.refpart_stack.pop()
                 assert s.__class__ == TstNode
-            if len(self.refpart_stack) > 0:
+            if self.refpart_stack:
                 delims = self.refpart_stack[-1].delims
             else:
                 section = self.st_lookup(self.root_name)
@@ -2600,7 +2606,7 @@ class BaseTangleCommands(object):
         if ucode: ucode = ucode[i:]
         #@-<< Remove leading blank lines and comments from ucode >>
         # g.trace(ucode)
-        if not ucode or len(ucode) == 0:
+        if not ucode:
             return false_ret # Not an error.
         if code and self.forgiving_compare(name, part, code, ucode):
             return false_ret # Not an error.
@@ -2691,7 +2697,7 @@ class BaseTangleCommands(object):
             return s1 == s2
     #@+node:ekr.20031218072017.3578: *4* copy
     def copy(self, s):
-        assert(len(self.def_stack) > 0)
+        assert self.def_stack
         # dn = self.def_stack[-1] # Add the code at the top of the stack.
         # dn.code += s
         self.def_stack[-1].code += s
@@ -3027,6 +3033,8 @@ class BaseTangleCommands(object):
         """
         c = self.c
         self.init_directive_ivars()
+        if not p:
+            p = c.p
         if p:
             s = p.b
             #@+<< Collect @first attributes >>

@@ -54,15 +54,12 @@ class Undoer(object):
     # So that ivars can be inited to None rather thatn [].
     #@+others
     #@+node:ekr.20150509193307.1: *3* u.Birth
-    #@+node:ekr.20031218072017.3606: *4* u.__init__
+    #@+node:ekr.20031218072017.3606: *4* u.__init__ & reloadSettings
     def __init__(self, c):
         self.c = c
         self.debug_Undoer = False # True: enable debugging code in new undo scheme.
         self.debug_print = False # True: enable print statements in debug code.
-        self.granularity = c.config.getString('undo_granularity')
-        if self.granularity: self.granularity = self.granularity.lower()
-        if self.granularity not in ('node', 'line', 'word', 'char'):
-            self.granularity = 'line'
+        self.granularity = None # Set in reloadSettings.
         # g.trace('Undoer',self.granularity)
         self.max_undo_stack_size = c.config.getInt('max_undo_stack_size') or 0
         # Statistics comparing old and new ways (only if self.debug_Undoer is on).
@@ -122,6 +119,16 @@ class Undoer(object):
         self.prevSel = None
         self.sortChildren = None
         self.verboseUndoGroup = None
+        self.reloadSettings()
+        
+    def reloadSettings(self):
+        '''Undoer.reloadSettings.'''
+        c = self.c
+        self.granularity = c.config.getString('undo_granularity')
+        if self.granularity:
+            self.granularity = self.granularity.lower()
+        if self.granularity not in ('node', 'line', 'word', 'char'):
+            self.granularity = 'line'
 
     def redoHelper(self):
         pass
@@ -442,7 +449,7 @@ class Undoer(object):
     #@+node:ekr.20050318085432.4: *4* u.afterX...
     #@+node:ekr.20050315134017.4: *5* u.afterChangeGroup
     def afterChangeGroup(self, p, undoType, reportFlag=False, dirtyVnodeList=None):
-        '''Create an undo node for general tree operations using d created by beforeChangeTree'''
+        '''Create an undo node for general tree operations using d created by beforeChangeGroup'''
         u = self; c = self.c
         w = c.frame.body.wrapper
         if u.redoing or u.undoing:
@@ -495,8 +502,12 @@ class Undoer(object):
         bunch.newDirty = p.isDirty()
         bunch.newHead = p.h
         bunch.newMarked = p.isMarked()
-        bunch.newSel = w.getSelectionRange()
-        bunch.newYScroll = w.getYScrollPosition()
+        # Bug fix 2017/11/12: don't use ternary operator.
+        if w:
+            bunch.newSel = w.getSelectionRange()
+        else:
+            bunch.newSel = 0, 0
+        bunch.newYScroll = w.getYScrollPosition() if w else 0
         u.pushBead(bunch)
     #@+node:ekr.20050315134017.3: *5* u.afterChangeTree
     def afterChangeTree(self, p, command, bunch):
@@ -861,10 +872,10 @@ class Undoer(object):
         u = self; c = u.c; w = c.frame.body.wrapper
         return g.Bunch(
             oldChanged=c.isChanged(),
-            oldDirty=p.isDirty(),
-            oldMarked=p.isMarked(),
+            oldDirty=p and p.isDirty(),
+            oldMarked=p and p.isMarked(),
             oldSel=w and w.getSelectionRange() or None,
-            p=p.copy(),
+            p=p and p.copy(),
         )
     #@+node:ekr.20031218072017.3610: *4* u.canRedo & canUndo
     # Translation does not affect these routines.
@@ -926,7 +937,9 @@ class Undoer(object):
         if hasattr(v, 'undo_info'):
             u.setIvarsFromBunch(v.undo_info)
     #@+node:ekr.20031218072017.1490: *4* u.setUndoTypingParams
-    def setUndoTypingParams(self, p, undo_type, oldText, newText, oldSel, newSel, oldYview=None):
+    def setUndoTypingParams(self, p, undo_type, oldText, newText,
+        oldSel=None, newSel=None, oldYview=None,
+    ):
         '''
         Save enough information to undo or redo typing operation.
 
@@ -951,7 +964,7 @@ class Undoer(object):
             u.setUndoTypes() # Must still recalculate the menu labels.
             return None
         #@-<< return if there is nothing to do >>
-        if trace: g.trace(undo_type, oldSel, newSel)
+        if trace: g.trace(undo_type, 'oldSel', oldSel, 'newSel', newSel)
         #@+<< init the undo params >>
         #@+node:ekr.20040324061854.1: *5* << init the undo params >>
         # Clear all optional params.
@@ -1075,7 +1088,6 @@ class Undoer(object):
         # get treated like typing (by updateBodyPane and onBodyChanged) don't get lumped
         # with 'real' typing.
         #@@c
-        # g.trace(granularity)
         if (
             not old_d or not old_p or
             old_p.v != p.v or
@@ -1095,17 +1107,26 @@ class Undoer(object):
                 old_d.get('leading', 0) != u.leading or
                 old_d.get('trailing', 0) != u.trailing
             )
+            # g.trace('granularity', granularity, 'newBead', newBead)
             if granularity == 'word' and not newBead:
                 # Protect the method that may be changed by the user
                 try:
                     #@+<< set newBead if the change does not continue a word >>
                     #@+node:ekr.20050125203937: *7* << set newBead if the change does not continue a word >>
-                    old_start, old_end = oldSel if oldSel else 0, 0
-                    new_start, new_end = newSel if newSel else 0, 0
+                    # Fix #653: undoer problem: be wary of the ternary operator here.
+                    old_start = old_end = new_start = new_end = 0
+                    if oldSel:
+                        old_start, old_end = oldSel
+                    if newSel:
+                        new_start, new_end = newSel
                     prev_start, prev_end = u.prevSel
-                    # g.trace('new_start',new_start,'old_start',old_start)
+                    if trace:
+                        g.trace('oldSel: %s newSel: %s' % (oldSel, newSel))
+                        g.trace('old_start: %s old_end: %s new_start: %s new_end: %s' % (
+                            old_start, old_end, new_start, new_end))
                     if old_start != old_end or new_start != new_end:
                         # The new and old characters are not contiguous.
+                        if trace: g.trace('not contiguous')
                         newBead = True
                     else:
                         # 2011/04/01: Patch by Sam Hartsfield
@@ -1135,7 +1156,7 @@ class Undoer(object):
                             if old_col - 1 >= len(old_s) or new_col - 1 >= len(new_s):
                                 newBead = True
                             else:
-                                # g.trace(new_col,len(new_s),repr(new_s))
+                                if trace: g.trace(new_col,len(new_s),repr(new_s))
                                 old_ch = old_s[old_col - 1]
                                 new_ch = new_s[new_col - 1]
                                 # g.trace(repr(old_ch),repr(new_ch))
@@ -1395,7 +1416,7 @@ class Undoer(object):
         # Restore the body.
         u.p.setBodyString(u.newBody)
         w.setAllText(u.newBody)
-        c.frame.body.recolor(u.p, incremental=False)
+        c.frame.body.recolor(u.p)
         # Restore the headline.
         u.p.initHeadString(u.newHead)
         # This is required so.  Otherwise redraw will revert the change!
@@ -1453,8 +1474,6 @@ class Undoer(object):
         # selectPosition causes recoloring, so avoid if possible.
         if current != u.p:
             c.selectPosition(u.p)
-        elif u.undoType in ('Cut', 'Paste', 'Clear Recent Files'):
-            c.frame.body.forceFullRecolor()
         self.undoRedoText(
             u.p, u.leading, u.trailing,
             u.newMiddleLines, u.oldMiddleLines,
@@ -1532,7 +1551,7 @@ class Undoer(object):
     def undoCloneMarkedNodes(self):
         u = self
         next = u.p.next()
-        assert next.h == 'Clones of marked nodes', repr(u.p, next.h)
+        assert next.h == 'Clones of marked nodes', (u.p, next.h)
         next.doDelete()
         u.p.setAllAncestorAtFileNodesDirty()
         u.c.selectPosition(u.p)
@@ -1700,7 +1719,7 @@ class Undoer(object):
         w = c.frame.body.wrapper
         u.p.b = u.oldBody
         w.setAllText(u.oldBody)
-        c.frame.body.recolor(u.p, incremental=False)
+        c.frame.body.recolor(u.p)
         if trace: g.trace(repr(u.oldHead))
         u.p.h = u.oldHead
         # This is required.  Otherwise c.redraw will revert the change!
@@ -1754,13 +1773,13 @@ class Undoer(object):
         s = []
         if leading > 0:
             s.extend(body_lines[: leading])
-        if len(oldMidLines) > 0:
+        if oldMidLines:
             s.extend(oldMidLines)
         if trailing > 0:
             s.extend(body_lines[-trailing:])
         s = '\n'.join(s)
         # Remove trailing newlines in s.
-        while len(s) > 0 and s[-1] == '\n':
+        while s and s[-1] == '\n':
             s = s[: -1]
         # Add oldNewlines newlines.
         if oldNewlines > 0:
@@ -1777,7 +1796,7 @@ class Undoer(object):
         if sel:
             i, j = sel
             w.setSelectionRange(i, j, insert=j)
-        c.frame.body.recolor(p, incremental=False)
+        c.frame.body.recolor(p)
         w.seeInsertPoint() # 2009/12/21
     #@+node:ekr.20050408100042: *4* u.undoRedoTree
     def undoRedoTree(self, p, new_data, old_data):
@@ -1817,8 +1836,6 @@ class Undoer(object):
         # selectPosition causes recoloring, so don't do this unless needed.
         if current != u.p:
             c.selectPosition(u.p)
-        elif u.undoType in ("Cut", "Paste", 'Clear Recent Files'):
-            c.frame.body.forceFullRecolor()
         self.undoRedoText(
             u.p, u.leading, u.trailing,
             u.oldMiddleLines, u.newMiddleLines,

@@ -21,22 +21,22 @@ import optparse
 import sys
 import time
 #@+others
-#@+node:ekr.20160518000549.10: ** main
+#@+node:ekr.20160518000549.10: ** main (pyflakes-leo.py)
 def main(files):
-    '''Call run on all tables in tables_table.'''    
-    t1 = time.clock()
+    '''Call run on all tables in tables_table.'''
+    t1 = time.time()
     for fn in files:
         # Report the file name.
         assert g.os_path_exists(fn), fn
         sfn = g.shortFileName(fn)
-        s = g.readFileIntoEncodedString(fn, silent=False)
+        s = g.readFileIntoEncodedString(fn)
         if s and s.strip():
             r = reporter.Reporter(
                 errorStream=sys.stderr,
                 warningStream=sys.stderr,
                 )
             api.check(s, sfn, r)
-    t2 = time.clock()
+    t2 = time.time()
     n = len(files)
     print('%s file%s, time: %5.2f sec.' % (n, g.plural(n), t2-t1))
 #@+node:ekr.20160518000549.14: ** report_version
@@ -44,7 +44,7 @@ def report_version():
     try:
         import flake8
         print('flake8 version: %s' % flake8.__version__)
-    except ImportError:
+    except Exception:
         g.trace('can not import flake8')
 #@+node:ekr.20160518000549.15: ** scanOptions
 def scanOptions():
@@ -53,7 +53,7 @@ def scanOptions():
     # This automatically implements the -h (--help) option.
     parser = optparse.OptionParser()
     add = parser.add_option
-    add('-a', action='store_true', help='all')
+    add('-a', action='store_true', help='all (default)')
     add('-c', action='store_true', help='core')
     add('-e', action='store_true', help='external')
     add('-f', dest='filename', help='filename, relative to leo folder')

@@ -12,14 +12,16 @@ try:
     import builtins # Python 3
 except ImportError:
     import __builtin__ as builtins # Python 2.
+import cProfile as profile
 import doctest
 import gc
-import glob
+import logging
+import logging.handlers
 import os
-import cProfile as profile
 # import pstats # A Python distro bug: can fail on Ubuntu.
 # import re
 import sys
+import time
 import timeit
 import tokenize
 import unittest
@@ -46,8 +48,10 @@ class EditBodyTestCase(unittest.TestCase):
         self.parent = parent.copy()
         self.before = before.copy()
         self.after = after.copy()
-        self.sel = sel.copy() # Two lines giving the selection range in tk coordinates.
-        self.ins = ins.copy() # One line giving the insert point in tk coordinate.
+        self.sel = sel and sel.copy()
+            # Two lines giving the selection range in tk coordinates.
+        self.ins = ins and ins.copy()
+            # One line giving the insert point in tk coordinate.
         self.tempNode = tempNode.copy()
         # g.trace('parent',parent.h)
         # g.trace('before',before.h)
@@ -170,9 +174,12 @@ class GeneralTestCase(unittest.TestCase):
         '''Run a Leo GeneralTestCase test.'''
         trace = False
         trace_script = False
+        trace_time = False
         tm = self
         c = tm.c
         p = tm.p.copy()
+        if trace_time:
+            t1 = time.clock()
         script = g.getScript(c, p).strip()
         if self.setup_script:
             script = self.setup_script + '\n' + script
@@ -196,12 +203,18 @@ class GeneralTestCase(unittest.TestCase):
         # 2011/11/02: pass the script sources to exec or execfile.
         if c.write_script_file:
             scriptFile = c.writeScriptFile(script)
+            # pylint: disable=no-member
             if g.isPython3:
                 exec(compile(script, scriptFile, 'exec'), d)
             else:
                 builtins.execfile(scriptFile, d)
         else:
             exec(script, d)
+        if trace_time:
+            t2 = time.clock()
+            if t2 - t1 > 3.0:
+                print('')
+                g.trace('EXCESSIVE TIME: %5.2f sec. in %s' % (t2-t1, self.p.h))
     #@+node:ekr.20051104075904.11: *3* shortDescription
     def shortDescription(self):
         s = self.p.h
@@ -212,7 +225,12 @@ class GeneralTestCase(unittest.TestCase):
 class ImportExportTestCase(unittest.TestCase):
     """Data-driven unit tests for Leo's edit body commands."""
     #@+others
-    #@+node:ekr.20051104075904.80: *3* __init__ (importExportTestCase)
+    #@+node:ekr.20051104075904.81: *3*  fail (ImportExportTestCase)
+    def fail(self, msg=None):
+        """Mark a unit test as having failed."""
+        import leo.core.leoGlobals as g
+        g.app.unitTestDict["fail"] = g.callers()
+    #@+node:ekr.20051104075904.80: *3* __init__ (ImportExportTestCase)
     def __init__(self, c, p, dialog, temp_p, doImport):
         # Init the base class.
         unittest.TestCase.__init__(self)
@@ -226,12 +244,7 @@ class ImportExportTestCase(unittest.TestCase):
         self.fileName = ""
         self.doImport = doImport
         self.old_p = c.p
-    #@+node:ekr.20051104075904.81: *3*  fail (importExportTestCase)
-    def fail(self, msg=None):
-        """Mark a unit test as having failed."""
-        import leo.core.leoGlobals as g
-        g.app.unitTestDict["fail"] = g.callers()
-    #@+node:ekr.20051104075904.82: *3* importExport
+    #@+node:ekr.20051104075904.82: *3* importExport (ImportExportTestCase)
     def importExport(self):
         c = self.c; p = self.p
         g.app.unitTestDict = {'c': c, 'g': g, 'p': p and p.copy()}
@@ -240,11 +253,11 @@ class ImportExportTestCase(unittest.TestCase):
         command(event=None)
         failedMethod = g.app.unitTestDict.get("fail")
         self.assertFalse(failedMethod, failedMethod)
-    #@+node:ekr.20051104075904.83: *3* runTest
+    #@+node:ekr.20051104075904.83: *3* runTest (ImportExportTestCase)
     def runTest(self):
         # """Import Export Test Case"""
         self.importExport()
-    #@+node:ekr.20051104075904.84: *3* setUp
+    #@+node:ekr.20051104075904.84: *3* setUp (ImportExportTestCase)
     def setUp(self):
         trace = False
         c = self.c; temp_p = self.temp_p
@@ -279,13 +292,13 @@ class ImportExportTestCase(unittest.TestCase):
             theDict = {name: fileName}
         self.oldGui = g.app.gui
         self.gui = leoGui.UnitTestGui(theDict, trace=False)
-    #@+node:ekr.20051104075904.85: *3* shortDescription
+    #@+node:ekr.20051104075904.85: *3* shortDescription (ImportExportTestCase)
     def shortDescription(self):
         try:
             return "ImportExportTestCase: %s %s" % (self.p.h, self.fileName)
         except Exception:
             return "ImportExportTestCase"
-    #@+node:ekr.20051104075904.86: *3* tearDown
+    #@+node:ekr.20051104075904.86: *3* tearDown (ImportExportTestCase)
     def tearDown(self):
         c = self.c; temp_p = self.temp_p
         if self.gui:
@@ -383,7 +396,7 @@ class LinterTable():
             'trace_gc_plugin', 'trace_keys', 'trace_tags',
             'vim', 'xemacs',
         )
-    #@+node:ekr.20160518074545.8: *3* plugins
+    #@+node:ekr.20160518074545.8: *3* plugins (LinterTable)
     def plugins(self):
         '''Return a list of all important plugins.'''
         aList = []
@@ -391,7 +404,7 @@ class LinterTable():
             pattern = g.os_path_finalize_join(self.loadDir, 'plugins', theDir, '*.py')
             aList.extend(self.get_files(pattern))
             # Don't use get_files here.
-            # for fn in glob.glob(pattern):
+            # for fn in g.glob_glob(pattern):
                 # sfn = g.shortFileName(fn)
                 # if sfn != '__init__.py':
                     # sfn = os.sep.join([theDir, sfn]) if theDir else sfn
@@ -405,6 +418,7 @@ class LinterTable():
             'leofts.py', # Not (yet) in leoPlugins.leo.
             'qtGui.py', # Dummy file
             'qt_main.py', # Created automatically.
+            'rst3.py', # Obsolete
         ]
         remove = [g.os_path_finalize_join(self.loadDir, 'plugins', fn) for fn in remove]
         aList = sorted([z for z in aList if z not in remove])
@@ -414,17 +428,18 @@ class LinterTable():
                 # aList.remove(z)
         # g.trace('\n'.join(aList))
         return sorted(set(aList))
-    #@+node:ekr.20160520093506.1: *3* get_files
+    #@+node:ekr.20160520093506.1: *3* get_files (LinterTable)
     def get_files(self, pattern):
         '''Return the list of absolute file names matching the pattern.'''
-        return sorted([
-            fn for fn in glob.glob(pattern)
+        aList = sorted([
+            fn for fn in g.glob_glob(pattern)
                 if g.os_path_isfile(fn) and g.shortFileName(fn) != '__init__.py'])
+        return aList
     #@+node:ekr.20160518074545.9: *3* get_files_for_scope
     def get_files_for_scope(self, scope, fn):
         '''Return a list of absolute filenames for external linters.'''
         d = {
-            'all':      [self.core, self.commands, self.external, self.plugins, self.modes],
+            'all':      [self.core, self.commands, self.external, self.plugins], #  self.modes
             'commands': [self.commands],
             'core':     [self.core, self.commands, self.external, self.gui_plugins],
             'external': [self.external],
@@ -437,7 +452,8 @@ class LinterTable():
         paths = []
         if functions:
             for func in functions:
-                files = func()
+                files = [func] if g.isString(func) else func()
+                    # Bug fix: 2016/10/15
                 for fn in files:
                     fn = g.os_path_abspath(fn)
                     if g.os_path_exists(fn):
@@ -473,7 +489,7 @@ class RunTestExternallyHelperClass(object):
         Create dynamicUnitTest.leo, then run all tests from dynamicUnitTest.leo
         in a separate process.
         '''
-        trace = True
+        trace = False
         import time
         c = self.c; p = c.p
         t1 = time.time()
@@ -491,7 +507,7 @@ class RunTestExternallyHelperClass(object):
                     kind, t2 - t1, self.fileName))
                 # g.blue('created %s unit tests' % (kind))
             # 2010/09/09: allow a way to specify the gui.
-            gui = g.app.UnitTestGui or 'nullGui'
+            gui = g.app.unitTestGui or 'nullGui'
             self.runUnitTestLeoFile(gui=gui, path='dynamicUnitTest.leo')
                 # Let runUitTestLeoFile determine most defaults.
             c.selectPosition(p.copy())
@@ -563,7 +579,7 @@ class RunTestExternallyHelperClass(object):
     ):
         '''Run all unit tests in path (a .leo file) in a pristine environment.'''
         # New in Leo 4.5: leoDynamicTest.py is in the leo/core folder.
-        trace = True
+        trace = False
         verbose = False
             # The verbose trace is pretty much a duplicate of the trace in
             # leoDynamicTest.py:main()
@@ -655,17 +671,60 @@ class TestManager(object):
             # Verbosity: 1: print just dots.
             if not found:
                 # 2011/10/30: run the body of p as a unit test.
-                if trace: g.trace('no found: running raw body')
+                if trace: g.trace('not found: running raw body')
                 test = tm.makeTestCase(c.p, setup_script)
                 if test:
                     suite.addTest(test)
                     found = True
             if found:
-                res = unittest.TextTestRunner(verbosity=verbosity).run(suite)
+                if g.app.gui.guiName() == 'curses':
+                    logger, handler, stream = self.create_logging_stream()
+                    runner = unittest.TextTestRunner(
+                        stream=stream,
+                        failfast=g.app.failFast,
+                        verbosity=verbosity,
+                    )
+                else:
+                    stream = None
+                    runner = unittest.TextTestRunner(
+                        # stream=stream, # Careful: doesn't work with Python 2.
+                        failfast=g.app.failFast,
+                        verbosity=verbosity,
+                    )
+                if 1: # Use the null gui for all unit tests.
+                    import leo.core.leoFrame as leoFrame
+                    g.app.old_gui = old_gui = g.app.gui
+                    old_frame = c.frame
+                    old_k_w = c.k.w
+                    try:
+                        g.app.gui = leoGui.NullGui()
+                        c.frame = leoFrame.NullFrame(c, title='<title>', gui=g.app.gui)
+                        c.frame.openDirectory = old_frame.openDirectory
+                            # A kluge, but quite useful.
+                        c.k.w = None
+                            # A huge switcheroo.
+                        result = runner.run(suite)
+                    finally:
+                        g.app.gui = old_gui
+                        c.frame = old_frame
+                        c.k.w = old_k_w
+                        # Allow unit tests to kill the console gui.
+                        if g.app.killed:
+                            if g.app.trace_shutdown:
+                                g.trace('calling sys.exit(0) after unit test')
+                            sys.exit(0)
+                else:
+                    result = runner.run(suite)
+                if stream:
+                    if stream.aList:
+                        # pylint: disable=logging-not-lazy
+                            # This may be a pylint issue.
+                        logger.info('\n'+''.join(stream.aList))
+                    logger.removeHandler(handler)
                 # put info to db as well
                 if g.enableDB:
                     key = 'unittest/cur/fail'
-                    archive = [(t.p.gnx, trace2) for(t, trace2) in res.errors]
+                    archive = [(t.p.gnx, trace2) for(t, trace2) in result.errors]
                     c.cacher.db[key] = archive
             else:
                 g.error('no %s@test or @suite nodes in %s outline' % (
@@ -673,12 +732,56 @@ class TestManager(object):
                     'entire' if all else 'selected'))
         finally:
             c.setChanged(changed) # Restore changed state.
-            if g.app.unitTestDict.get('restoreSelectedNode', True):
+            g.unitTesting = g.app.unitTesting = False
+            if True: # g.app.unitTestDict.get('restoreSelectedNode', True):
+                # This is more natural, and more useful.
                 c.contractAllHeadlines()
                 c.redraw(p1)
             else:
                 c.recolor() # Needed when coloring is disabled in unit tests.
-            g.unitTesting = g.app.unitTesting = False
+    #@+node:ekr.20170504130531.1: *5* class LoggingLog
+    class LoggingStream:
+        '''A class that can searve as a logging stream.'''
+
+        def __init__(self, logger):
+            self.aList = []
+            self.logger = logger
+
+        def write(self, s):
+            '''Called from pr and also unittest.addSuccess/addFailure.'''
+            if 0: # Write everything on a new line.
+                if not s.isspace():
+                    self.logger.info(s.rstrip())
+            else:
+                s = s.strip()
+                if len(s) == 1:
+                    self.aList.append(s)
+                elif s:
+                    if self.aList:
+                        self.logger.info(''.join(self.aList))
+                        self.aList = []
+                    self.logger.info(s.rstrip())
+        def flush(self):
+            pass
+
+    #@+node:ekr.20170504130408.1: *5* create_logging_stream
+    def create_logging_stream(self):
+
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+
+            # Don't use debug: it includes Qt debug messages.
+        for handler in logger.handlers or []:
+            if isinstance(handler, logging.handlers.SocketHandler):
+                break
+        else:
+            handler = logging.handlers.SocketHandler(
+                'localhost',
+                logging.handlers.DEFAULT_TCP_LOGGING_PORT,
+            )
+            logger.addHandler(handler)
+        stream = self.LoggingStream(logger)
+        return logger, handler, stream
     #@+node:ekr.20120912094259.10549: *5* get_suite_script
     def get_suite_script(self):
         s = '''
@@ -725,6 +828,7 @@ class TestManager(object):
             d = {'c': c, 'g': g, 'p': p, 'unittest': unittest}
             if c.write_script_file:
                 scriptFile = c.writeScriptFile(script)
+                # pylint: disable=no-member
                 if g.isPython3:
                     exec(compile(script, scriptFile, 'exec'), d)
                 else:
@@ -769,6 +873,7 @@ class TestManager(object):
             d = {'c': c, 'g': g, 'p': p}
             if c.write_script_file:
                 scriptFile = c.writeScriptFile(script)
+                # pylint: disable=no-member
                 if g.isPython3:
                     exec(compile(script, scriptFile, 'exec'), d)
                 else:
@@ -915,8 +1020,7 @@ class TestManager(object):
         theType = h1[1: j]
         assert theType in (
             "@auto", "@clean", "@edit", "@file", "@thin", "@nosent",
-            "@asis",), "bad type: %s" % type
-        thinFile = theType == "@thin"
+            "@asis",), "bad type: %s" % theType
         nosentinels = theType in ("@asis", "@clean", "@edit", "@nosent")
         if theType == "@asis":
             at.asisWrite(child1, toString=True)
@@ -925,7 +1029,7 @@ class TestManager(object):
         elif theType == "@edit":
             at.writeOneAtEditNode(child1, toString=True)
         else:
-            at.write(child1, thinFile=thinFile, nosentinels=nosentinels, toString=True)
+            at.write(child1, nosentinels=nosentinels, toString=True)
         try:
             result = g.toUnicode(at.stringOutput)
             assert result == expected
@@ -947,6 +1051,7 @@ class TestManager(object):
     def runEditCommandTest(self, p):
         tm = self
         c = self.c
+        # g.trace(c.config.getInt('page_width'), c.config.getInt('tab_width'), p.h)
         atTest = p.copy()
         w = c.frame.body.wrapper
         h = atTest.h
@@ -1234,6 +1339,7 @@ class TestManager(object):
         if len(lines1) != len(lines2):
             if verbose: g.trace("Different number of lines")
             return False
+        # pylint: disable=consider-using-enumerate
         for i in range(len(lines2)):
             line1 = lines1[i]
             line2 = lines2[i]
@@ -1284,29 +1390,12 @@ class TestManager(object):
             )
             if not ok: break
             p2.moveToThreadNext()
-        if not report:
-            return ok
-        if ok:
-            if 0:
-                g.pr('compareOutlines ok', newline=False)
-                if tag: g.pr('tag:', tag)
-                else: g.pr('')
-                if p1: g.pr('p1', p1, p1.v)
-                if p2: g.pr('p2', p2, p2.v)
-        else:
-            g.pr('compareOutlines failed', newline=False)
-            if tag: g.pr('tag:', tag)
-            else: g.pr('')
-            if p1: g.pr('p1', p1.h)
-            if p2: g.pr('p2', p2.h)
-            if not p1 or not p2:
-                g.pr('p1 and p2')
-            if p1.numberOfChildren() != p2.numberOfChildren():
-                g.pr('p1.numberOfChildren()=%d, p2.numberOfChildren()=%d' % (
-                    p1.numberOfChildren(), p2.numberOfChildren()))
-            if compareHeadlines and (p1.h != p2.h):
-                g.pr('p1.head', p1.h)
-                g.pr('p2.head', p2.h)
+        if report and not ok:
+            g.pr('\ncompareOutlines failed: tag:', (tag or ''))
+            g.pr('p1.h:', p1 and p1.h or '<no p1>')
+            g.pr('p2.h:', p2 and p2.h or '<no p2>')
+            g.pr('p1.numberOfChildren(): %s' % p1.numberOfChildren())
+            g.pr('p2.numberOfChildren(): %s' % p2.numberOfChildren())
             if b1 != b2:
                 self.showTwoBodies(p1.h, p1.b, p2.b)
             if p1.isCloned() != p2.isCloned():
@@ -1349,6 +1438,7 @@ class TestManager(object):
                 p.moveToNodeAfterTree()
                 continue
             seen.append(p.v)
+            # pylint: disable=consider-using-ternary
             add = (marked and p.isMarked()) or not marked
             if g.match_word(p.h, 0, '@ignore'):
                 if trace and verbose: g.trace(p.h)
@@ -1461,7 +1551,7 @@ class TestManager(object):
         return result
     #@+node:ekr.20051104075904.27: *4* TM.findChildrenOf
     def findChildrenOf(self, root):
-        return [p.copy() for p in root.children()]
+        return list(root.children())
     #@+node:ekr.20120220070422.10423: *4* TM.findNodeAnywhere
     def findNodeAnywhere(self, headline, breakOnError=False):
         # tm = self
@@ -1473,7 +1563,7 @@ class TestManager(object):
         if False and breakOnError: # useful for debugging.
             aList = [repr(z.copy()) for z in c.p.parent().self_and_siblings()]
             print('\n'.join(aList))
-        return c.nullPosition()
+        return None
     #@+node:ekr.20051104075904.29: *4* TM.findNodeInRootTree
     def findRootNode(self, p):
         """Return the root of p's tree."""
@@ -1484,20 +1574,20 @@ class TestManager(object):
     def findNodeInTree(self, p, headline, startswith=False):
         """Search for a node in p's tree matching the given headline."""
         # tm = self
-        c = self.c
+        # c = self.c
         h = headline.strip().lower()
         for p in p.subtree():
             h2 = p.h.strip().lower()
             if h2 == h or startswith and h2.startswith(h):
                 return p.copy()
-        return c.nullPosition()
+        return None
     #@+node:ekr.20051104075904.28: *4* TM.findSubnodesOf
     def findSubnodesOf(self, root):
-        return [p.copy() for p in root.subtree()]
+        return list(root.subtree())
     #@+node:ekr.20051104075904.91: *4* TM.getAllPluginFilenames
     def getAllPluginFilenames(self):
         path = g.os_path_join(g.app.loadDir, "..", "plugins")
-        files = glob.glob(g.os_path_join(path, "*.py"))
+        files = g.glob_glob(g.os_path_join(path, "*.py"))
         files = [g.os_path_finalize(f) for f in files]
         files.sort()
         return files
@@ -1510,7 +1600,7 @@ class TestManager(object):
             g.es("path does not exist:", path)
             return []
         path2 = g.os_path_join(path, "leo*.py")
-        files = glob.glob(path2)
+        files = g.glob_glob(path2)
         files2 = []
         for theFile in files:
             for z in exclude:
@@ -1613,30 +1703,29 @@ class TestManager(object):
     def throwAssertionError(self):
         assert 0, 'assert(0) as a test of catching assertions'
     #@+node:ekr.20051104075904.37: *4* TM.writeNodesToNode
-    def writeNodesToNode(self, c, input, output, sentinels=True):
+    def writeNodesToNode(self, c, p, output, sentinels=True):
         result = []
-        for p in input.self_and_subtree():
-            s = self.writeNodeToString(c, p, sentinels)
+        for p2 in p.self_and_subtree():
+            s = self.writeNodeToString(c, p2, sentinels)
             result.append(s)
         result = ''.join(result)
         output.scriptSetBodyString(result)
     #@+node:ekr.20051104075904.38: *4* TM.writeNodeToNode
-    def writeNodeToNode(self, c, input, output, sentinels=True):
-        """Do an AtFile.write the input tree to the body text of the output node."""
-        s = self.writeNodeToString(c, input, sentinels)
+    def writeNodeToNode(self, c, p, output, sentinels=True):
+        """Do an AtFile.write the p's tree to the body text of the output node."""
+        s = self.writeNodeToString(c, p, sentinels)
         output.scriptSetBodyString(s)
     #@+node:ekr.20051104075904.39: *4* TM.writeNodeToString
-    def writeNodeToString(self, c, input, sentinels):
-        """Return an AtFile.write of the input tree to a string."""
-        df = c.atFileCommands
+    def writeNodeToString(self, c, p, sentinels):
+        """Return an AtFile.write of p's tree to a string."""
+        at = c.atFileCommands
         ni = g.app.nodeIndices
-        for p in input.self_and_subtree():
-            if not p.v.fileIndex:
-                p.v.fileIndex = ni.getNewIndex(p.v)
+        for p2 in p.self_and_subtree():
+            if not p2.v.fileIndex:
+                p2.v.fileIndex = ni.getNewIndex(p2.v)
         # Write the file to a string.
-        df.write(input, thinFile=True, nosentinels=not sentinels, toString=True)
-        s = df.stringOutput
-        return s
+        at.write(p, nosentinels=not sentinels, toString=True)
+        return at.stringOutput
     #@-others
 #@+node:ekr.20120220070422.10420: ** Top-level functions (leoTest)
 #@+node:ekr.20051104075904.97: *3* leoTest.py: factorial (a test of doctests)
@@ -1684,6 +1773,7 @@ def factorial(n):
         try:
             result *= factor
         except OverflowError:
+            # pylint: disable=no-member
             f = builtins.int if g.isPython3 else builtins.long
             result *= f(factor)
         factor += 1
@@ -1711,15 +1801,25 @@ def runGc(disable=False):
 runGC = runGc
 #@+node:ekr.20051104075904.18: *4* enableGc
 def set_debugGc():
-    gc.set_debug(
-        gc.DEBUG_STATS | # prints statistics.
-        # gc.DEBUG_LEAK | # Same as all below.
-        # gc.DEBUG_COLLECTABLE
-        # gc.DEBUG_UNCOLLECTABLE
-        gc.DEBUG_INSTANCES |
-        gc.DEBUG_OBJECTS
-        # gc.DEBUG_SAVEALL
-    )
+    # pylint: disable=no-member
+    if g.isPython3:
+        gc.set_debug(
+            gc.DEBUG_STATS # prints statistics.
+            # gc.DEBUG_LEAK | # Same as all below.
+            # gc.DEBUG_COLLECTABLE
+            # gc.DEBUG_UNCOLLECTABLE
+            # gc.DEBUG_SAVEALL
+        )
+    else:
+        gc.set_debug(
+            gc.DEBUG_STATS | # prints statistics.
+            # gc.DEBUG_LEAK | # Same as all below.
+            # gc.DEBUG_COLLECTABLE
+            # gc.DEBUG_UNCOLLECTABLE
+            gc.DEBUG_INSTANCES |
+            gc.DEBUG_OBJECTS
+            # gc.DEBUG_SAVEALL
+        )
 #@+node:ekr.20051104075904.19: *4* makeObjectList
 def makeObjectList(message):
     # WARNING: this id trick is not proper: newly allocated objects can have the same address as old objects.
@@ -1776,13 +1876,16 @@ def printGc(message=None):
                 funcDict[key] = None
                 if key not in lastFunctionsDict:
                     g.pr('\n', obj)
-                    args, varargs, varkw, defaults = inspect.signature(obj)
-                    g.pr("args", args)
-                    if varargs: g.pr("varargs", varargs)
-                    if varkw: g.pr("varkw", varkw)
-                    if defaults:
-                        g.pr("defaults...")
-                        for s in defaults: g.pr(s)
+                    if g.isPython3:
+                        # pylint: disable=no-member
+                        # signature exists in Python 3.x.
+                        args, varargs, varkw, defaults = inspect.signature(obj)
+                        g.pr("args", args)
+                        if varargs: g.pr("varargs", varargs)
+                        if varkw: g.pr("varkw", varkw)
+                        if defaults:
+                            g.pr("defaults...")
+                            for s in defaults: g.pr(s)
         lastFunctionsDict = funcDict
         funcDict = {}
         #@-<< print added functions >>

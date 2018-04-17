@@ -287,6 +287,9 @@ if QtWidgets:
                     self.add_item(add_callback, menu, 'Add %s' % (ab[i]))
             # Rotate All.
             self.add_item(splitter.rotate, menu, 'Toggle split direction')
+            def rotate_only_this(index=index):
+                splitter.rotateOne(index)
+            self.add_item(rotate_only_this, menu, 'Toggle split/dir. just this')
             # equalize panes
 
             def eq(splitter=splitter.top()):
@@ -398,14 +401,8 @@ if QtWidgets: # NOQA
             # QtConst.Vertical: QtConst.Horizontal,
             # QtConst.Horizontal: QtConst.Vertical
         }
-
-        # NestedSplitter is a kind of meta-widget, in that it manages
-        # panes across multiple actual splitters, even windows.
-        # So to create a signal for a click on splitter handle, we
-        # need to propagate the .connect() call across all the
-        # actual splitters, current and future
-        _splitterClickedArgs = []  # save for future added splitters
-        # a regular signal, but you can't use its .connect() directly
+        # a regular signal, but you can't use its .connect() directly,
+        # use splitterClicked_connect()
         _splitterClickedSignal = QtCore.pyqtSignal(
             QtWidgets.QSplitter,
             QtWidgets.QSplitterHandle,
@@ -413,6 +410,7 @@ if QtWidgets: # NOQA
             bool,
             bool
         )
+
         #@+others
         #@+node:ekr.20110605121601.17967: *3* ns.__init__
         def __init__(self, parent=None, orientation=QtCore.Qt.Horizontal, root=None):
@@ -435,10 +433,17 @@ if QtWidgets: # NOQA
                     # list of top level NestedSplitter windows opened from 'Open Window'
                     # splitter handle context menu
                     root.zoomed = False
-            self.root = root
-            for args in self._splitterClickedArgs:
+                # NestedSplitter is a kind of meta-widget, in that it manages
+                # panes across multiple actual splitters, even windows.
+                # So to create a signal for a click on splitter handle, we
+                # need to propagate the .connect() call across all the
+                # actual splitters, current and future
+                root._splitterClickedArgs = []  # save for future added splitters
+            for args in root._splitterClickedArgs:
                 # apply any .connect() calls that occured earlier
                 self._splitterClickedSignal.connect(*args)
+
+            self.root = root
         #@+node:ekr.20110605121601.17968: *3* ns.__repr__
         def __repr__(self):
             # parent = self.parent()
@@ -895,6 +900,45 @@ if QtWidgets: # NOQA
                     i.setOrientation(QtCore.Qt.Horizontal)
                 else:
                     i.setOrientation(QtCore.Qt.Vertical)
+        #@+node:vitalije.20170713085342.1: *3* ns.rotateOne
+        def rotateOne(self, index):
+            """Change orientation - only of splithandle at index."""
+            psp = self.parent()
+            if self.count() == 2 and isinstance(psp, NestedSplitter):
+                i = psp.indexOf(self)
+                sizes = psp.sizes()
+                [a, b] = self.sizes()
+                s = sizes[i]
+                s1 = a * s / (a + b); s2 = b * s / (a + b)
+                sizes[i:i+1] = [s1, s2]
+                prev = self.widget(0)
+                next = self.widget(1)
+                psp.insertWidget(i, prev)
+                psp.insertWidget(i + 1, next)
+                psp.setSizes(sizes)
+                assert psp.widget(i + 2) is self
+                psp.remove(i + 3, 0)
+                psp.setSizes(sizes)
+            elif self is self.root and self.count() == 2:
+                self.rotate()
+            elif self.count() == 2:
+                self.setOrientation(self.other_orientation[self.orientation()])
+            else:
+                orientation = self.other_orientation[self.orientation()]
+                prev = self.widget(index - 1)
+                next = self.widget(index)
+                if None in (prev, next): return
+                sizes = self.sizes()
+                s1, s2 = sizes[index-1: index+1]
+                sizes[index-1: index+1] = [s1 + s2]
+                newsp = NestedSplitter(self, orientation=orientation, root=self.root)
+                newsp.addWidget(prev)
+                newsp.addWidget(next)
+                self.insertWidget(index - 1, newsp)
+                prev.setHidden(False)
+                next.setHidden(False)
+                newsp.setSizes([s1, s2])
+                self.setSizes(sizes)
         #@+node:ekr.20110605121601.17984: *3* ns.self_and_descendants
         def self_and_descendants(self):
             """Yield self and all **NestedSplitter** descendants"""
@@ -1185,7 +1229,7 @@ if QtWidgets: # NOQA
             """Apply .connect() args to all actual splitters,
             and store for application to future splitters.
             """
-            self._splitterClickedArgs.append(args)
+            self.root._splitterClickedArgs.append(args)
             for splitter in self.top().self_and_descendants():
                 splitter._splitterClickedSignal.connect(*args)
         #@-others

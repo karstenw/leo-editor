@@ -2,6 +2,12 @@
 __pycache__/
 *.py[cod]
 
+# .db files
+*.db
+
+# Files in leo/proto
+leo/proto/*
+
 # C extensions
 *.so
 
@@ -47,9 +53,12 @@ leo/test/unittest/rst_write_test.txt
 
 gradient.png
 log.txt
+stdout.txt
+stdin.txt
 
 leo/*.zip
 
+# leo/core/commit_timestamp.json
 leo/core/LeoPy.leo
 leo/core/leoPy.leo
 leo/core/unittest

@@ -8,6 +8,14 @@
 # import pdb ; pdb = pdb.set_trace
 import os
 import sys
+# Partial fix for #541.
+# See https://stackoverflow.com/questions/24835155/pyw-and-pythonw-does-not-run-under-windows-7/30310192#30310192
+if sys.executable.endswith("pythonw.exe"):
+    sys.stdout = open(os.devnull, "w");
+    sys.stderr = open(
+        os.path.join(os.getenv("TEMP"),
+        "stderr-"+os.path.basename(sys.argv[0])),
+        "w")
 path = os.getcwd()
 if path not in sys.path:
     # print('appending %s to sys.path' % path)
@@ -58,9 +66,18 @@ prof = profile_leo
 #@+node:ekr.20120219154958.10499: ** run (runLeo.py)
 def run(fileName=None, pymacs=None, *args, **keywords):
     """Initialize and run Leo"""
+    # pylint: disable=keyword-arg-before-vararg
+        # putting *args first is invalid in Python 2.x.
     assert g.app
+    # g.trace('runLeo.py', fileName, args, keywords)
     g.app.loadManager = leoApp.LoadManager()
     g.app.loadManager.load(fileName, pymacs)
+#@+node:maphew.20180110221247.1: ** run console (runLeo.py)
+def run_console(*args, **keywords):
+    """Initialize and run Leo in console mode gui"""
+    import sys
+    sys.argv.append('--gui=console')
+    run(*args, **keywords)
 #@-others
 #@@language python
 #@@tabwidth -4

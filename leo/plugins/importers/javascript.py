@@ -1,324 +1,427 @@
 #@+leo-ver=5-thin
 #@+node:ekr.20140723122936.18144: * @file importers/javascript.py
 '''The @auto importer for JavaScript.'''
+import re
 import leo.core.leoGlobals as g
-import leo.plugins.importers.basescanner as basescanner
+import leo.plugins.importers.linescanner as linescanner
+Importer = linescanner.Importer
+Target = linescanner.Target
 #@+others
-#@+node:ekr.20140723122936.18049: ** class JavaScriptScanner
-# The syntax for patterns causes all kinds of problems...
+#@+node:ekr.20140723122936.18049: ** class JS_Importer
+class JS_Importer(Importer):
 
-class JavaScriptScanner(basescanner.BaseScanner):
-    #@+others
-    #@+node:ekr.20140723122936.18050: *3* jss.__init__
-    def __init__(self, importCommands, atAuto, language='javascript', alternate_language=None):
-        '''The ctor for the JavaScriptScanner class.'''
+    def __init__(self, importCommands, force_at_others=False, **kwargs):
+        '''The ctor for the JS_ImportController class.'''
         # Init the base class.
-        basescanner.BaseScanner.__init__(self, importCommands,
-            atAuto=atAuto,
-            language=language,
-                # The language is used to set comment delims.
-            alternate_language=alternate_language)
-                # The language used in the @language directive.
-        # Set the parser vars.
-        self.atAutoWarnsAboutLeadingWhitespace = False
-        self.blockCommentDelim1 = '/*'
-        self.blockCommentDelim2 = '*/'
-        self.blockDelim1 = '{'
-        self.blockDelim2 = '}'
-        self.hasClasses = True ### 2016/01/22
-        self.hasDecls = False ### 2016/01/22
-        self.hasFunctions = True
-        self.hasRegex = True
-        # self.ignoreBlankLines = True
-        self.lineCommentDelim = '//'
-        self.lineCommentDelim2 = None
-        self.outerBlockDelim1 = None # For now, ignore outer blocks.
-        self.outerBlockDelim2 = None
-        self.classTags = []
-        self.functionTags = ['function',]
-        self.sigFailTokens = [';',]
-        self.strict = False
-        # Extra semantic data...
-        self.classNames = []
-        self.functionNames = []
-    #@+node:ekr.20140723122936.18051: *3* jss.filterTokens
-    def filterTokens(self, tokens):
-        '''Filter tokens as needed for correct comparisons.
+        Importer.__init__(self,
+            importCommands,
+            gen_refs = False, # Fix #639.
+            language = 'javascript',
+            state_class = JS_ScanState,
+        )
 
-        For JavaScript this means ignoring newlines.
+    #@+others
+    #@+node:ekr.20180123051226.1: *3* js_i.post_pass & helpers
+    def post_pass(self, parent):
         '''
-        if 1: # Permissive: ignore added newlines.
-            return [(kind, val, line_number) for(kind, val, line_number) in tokens
-                    if kind not in ('nl',)] # 'ws',
-        else:
-            return tokens
-    #@+node:ekr.20160122170805.1: *3* jss.show
-    def show(self, s):
-        '''Attempt to show s with proper indentation.'''
-        print(s)
-        # lines = g.splitLines(s)
-        # if len(lines) < 2:
-            # print(s)
-        # else:
-            # s1 = lines[1]
-            # i, lws = 0, []
-            # while i < len(s1) and s1[i] in ' \t':
-                # lws.append(s1[i])
-                # i += 1
-            # lws = ''.join(lws)
-            # g.trace('lws:',repr(lws))
-            # print(lines[0])
-            # for s in lines[1:-1]:
-                # if lws and s.startswith(lws):
-                    # print(repr(s[len(lws):]))
-                # else:
-                    # print(repr(s))
-            # print(lines[-1].strip())
-    #@+node:ekr.20160122103056.1: *3* jss.skipBlock
-    def skipBlock(self, s, i, delim1, delim2):
-        '''Skip from the opening delim to *past* the matching closing delim.
+        Optional Stage 2 of the javascript pipeline.
 
-        If no matching is found i is set to len(s)'''
-        # pylint: disable=signature-differs
-        trace = False and not g.unitTesting
-        # k1, k2 = g.getLine(s,i)
-        # g.trace(s[i:])
-        i1, level = i, 0
-        assert s[i] == delim1, (s[i], delim1, g.callers())
-        while i < len(s):
-            progress = i
-            ch = s[i]
-            if g.is_nl(s, i):
-                i = g.skip_nl(s, i)
-            elif self.startsComment(s, i):
-                i = self.skipComment(s, i)
-            elif ch in '"\'':
-                i = self.skipString(s, i)
-            elif ch == '/':
-                i = self.skipRegex(s, i)
-            elif ch == delim1:
-                level += 1
-                i += 1
-            elif ch == delim2:
-                level -= 1
-                i += 1
-                if level <= 0:
-                    # g.trace('returns:\n\n%s\n\n' % s[i1: i])
-                    return i
+        All substages **must** use the API for setting body text. Changing
+        p.b directly will cause asserts to fail later in i.finish().
+        '''
+        self.clean_all_headlines(parent)
+        self.clean_all_nodes(parent)
+        self.remove_singleton_at_others(parent)
+        self.unindent_all_nodes(parent)
+        #
+        # This sub-pass must follow unindent_all_nodes.
+        self.promote_trailing_underindented_lines(parent)
+        self.promote_last_lines(parent)
+        #
+        # Usually the last sub-pass, but not in javascript.
+        self.delete_all_empty_nodes(parent)
+        #
+        # Must follow delete_all_empty_nodes.
+        self.remove_organizer_nodes(parent)
+        # 
+        # Remove up to 5 more levels of @others.
+        for i in range(5):
+            if self.remove_singleton_at_others(parent):
+                self.remove_organizer_nodes(parent)
             else:
-                i += 1
-            assert progress < i
-        self.error('no block: %s' % i)
+                break
+    #@+node:ekr.20180123051401.1: *4* js_i.remove_singleton_at_others
+    at_others = re.compile(r'^\s*@others\b')
+
+    def remove_singleton_at_others(self, parent):
+        '''Replace @others by the body of a singleton child node.'''
+        trace = False
+        found = False
         if trace:
-            i2, j2 = g.getLine(s, i1)
-            g.trace(i, level, s[i2:j2+1])
-        return i
-    #@+node:ekr.20160122071725.1: *3* jss.scan & scanHelper
-    def scan(self, s, parent, parse_body=False):
-        '''A javascript scanner.
+            print('')
+            g.trace(parent.h)
+            print('')
+        for p in parent.subtree():
+            if p.numberOfChildren() == 1:
+                child = p.firstChild()
+                lines = self.get_lines(p)
+                matches = [i for i,s in enumerate(lines) if self.at_others.match(s)]
+                if len(matches) == 1:
+                    found = True
+                    i = matches[0]
+                    if trace:
+                        g.trace('===== @others, line', i)
+                        g.printList(lines)
+                        g.trace('.....')
+                        g.printList(self.get_lines(child))
+                    lines = lines[:i] + self.get_lines(child) + lines[i+1:]
+                    if trace:
+                        g.trace('----- result')
+                        g.printList(lines)
+                    self.set_lines(p, lines)
+                    self.clear_lines(child) # Delete child later. Is this enough???
+                elif len(matches) > 1:
+                    if trace: g.trace('Ambiguous @others', p.h)
+                else:
+                    if trace: g.trace('No @others directive', p.h)
+        return found
+        
+                
+    #@+node:ekr.20180123060307.1: *4* js_i.remove_organizer_nodes
+    def remove_organizer_nodes(self, parent):
+        '''Removed all organizer nodes created by i.delete_all_empty_nodes.'''
+        trace = False and not g.unitTesting
+        if trace: g.trace('=====', parent.h)
+        # Careful: Restart this loop whenever we find an organizer.
+        found = True
+        while found:
+            found = False
+            for p in parent.subtree():
+                if p.h.lower() == 'organizer' and not self.get_lines(p):
+                    if trace: g.trace('FOUND', p.h)
+                    p.promote()
+                    p.doDelete()
+                    found = True # Restart the loop.
+    #@+node:ekr.20161105140842.5: *3* js_i.scan_line & helpers
+    #@@nobeautify
 
-        Create a child of self.root containing section references for
-        top-level functions and objects containing functions.
+    op_table = [
+        # Longest first in each line.
+        # '>>>', '>>>=',
+        # '<<<', '<<<=',
+        # '>>=',  '<<=',
+        '>>', '>=', '>',
+        '<<', '<=', '<',
+        '++', '+=', '+',
+        '--', '-=', '-',
+              '*=', '*',
+              '/=', '/',
+              '%=', '%',
+        '&&', '&=', '&',
+        '||', '|=', '|',
+                    '~',
+                    '=',
+                    '!', # Unary op can trigger regex.
+    ]
+    op_string = '|'.join([re.escape(z) for z in op_table])
+    op_pattern = re.compile(op_string)
 
-        Rescan all functions for innner functions.
+    def scan_line(self, s, prev_state):
         '''
-        i = self.scanHelper(parent, s)
-        ### Finish adding to the parent's body text.
-        ### self.addRef(parent)
-        if i < len(s) and s[i:].strip():
-            self.appendStringToBody(parent, s[i:])
-        ### Do any language-specific post-processing.
-        ### self.endGen(s)
-    #@+node:ekr.20160122071725.2: *4* jss.scanHelper
-    # scanHelper(self, s, i, end, parent, kind)
-    def scanHelper(self, parent, s):
-        '''Common scanning code used by both scan and putClassHelper.'''
-        # pylint: disable=arguments-differ
+        Update the scan state at the *end* of the line by scanning all of s.
+
+        Distinguishing the the start of a regex from a div operator is tricky:
+        http://stackoverflow.com/questions/4726295/
+        http://stackoverflow.com/questions/5519596/
+        (, [, {, ;, and binops can only be followed by a regexp.
+        ), ], }, ids, strings and numbers can only be followed by a div operator.
+        '''
+        trace = False # and not g.unitTesting
+        trace_ch = True
+        context = prev_state.context
+        curlies, parens = prev_state.curlies, prev_state.parens
+        expect = None # (None, 'regex', 'div')
         i = 0
+        # Special case for the start of a *file*
+        # if not context:
+            # i = g.skip_ws(s, i)
+            # m = self.start_pattern.match(s, i)
+            # if m:
+                # i += len(m.group(0))
+                # if g.match(s, i, '/'):
+                    # i = self.skip_regex(s, i)
+        while i < len(s):
+            assert expect is None, expect
+            progress = i
+            ch, s2 = s[i], s[i:i+2]
+            if trace and trace_ch: g.trace(repr(ch)) #, repr(s2))
+            if context == '/*':
+                if s2 == '*/':
+                    i += 2
+                    context = ''
+                    expect = 'div'
+                else:
+                    i += 1 # Eat the next comment char.
+            elif context:
+                assert context in ('"', "'", '`'), repr(context)
+                    # #651: support back tick
+                if ch == '\\':
+                    i += 2
+                elif context == ch:
+                    i += 1
+                    context = '' # End the string.
+                    expect = 'regex'
+                else:
+                    i += 1 # Eat the string character.
+            elif s2 == '//':
+                break # The single-line comment ends the line.
+            elif s2 == '/*':
+                # Start a comment.
+                i += 2
+                context = '/*'
+            elif ch in ('"', "'", '`',):
+                # #651: support back tick
+                # Start a string.
+                i += 1
+                context = ch
+            elif ch in '_$' or ch.isalpha():
+                # An identifier. Only *approximately* correct.
+                # http://stackoverflow.com/questions/1661197/
+                i += 1
+                while i < len(s) and (s[i] in '_$' or s[i].isalnum()):
+                    i += 1
+                expect = 'div'
+            elif ch.isdigit():
+                i += 1
+                # Only *approximately* correct.
+                while i < len(s) and (s[i] in '.+-e' or s[i].isdigit()):
+                    i += 1
+                # This should work even if the scan ends with '+' or '-'
+                expect = 'div'
+            elif ch in '?:':
+                i += 1
+                expect = 'regex'
+            elif ch in ';,':
+                i += 1
+                expect = 'regex'
+            elif ch == '\\':
+                i += 2
+            elif ch == '{':
+                i += 1
+                curlies += 1
+                expect = 'regex'
+            elif ch == '}':
+                i += 1
+                curlies -= 1
+                expect = 'div'
+            elif ch == '(':
+                i += 1
+                parens += 1
+                expect = 'regex'
+            elif ch == ')':
+                i += 1
+                parens -= 1
+                expect = 'div'
+            elif ch == '[':
+                i += 1
+                expect = 'regex'
+            elif ch == ']':
+                i += 1
+                expect = 'div'
+            else:
+                m = self.op_pattern.match(s, i)
+                if m:
+                    if trace: g.trace('OP', m.group(0))
+                    i += len(m.group(0))
+                    expect = 'regex'
+                elif ch == '/':
+                    g.trace('no lookahead for "/"', repr(s))
+                    assert False, i
+                else:
+                    i += 1
+                    expect = None
+            # Look for a '/' in the expected context.
+            if expect:
+                assert not context, repr(context)
+                i = g.skip_ws(s, i)
+                # Careful // is the comment operator.
+                if g.match(s, i, '//'):
+                    break
+                elif g.match(s, i, '/'):
+                    if expect == 'div':
+                        i += 1
+                    else:
+                        assert expect == 'regex', repr(expect)
+                        i = self.skip_regex(s,i)
+            expect = None
+            assert progress < i
+        d = {'context':context, 'curlies':curlies, 'parens':parens}
+        state = JS_ScanState(d)
+        if trace: g.trace(state)
+        return state
+    #@+node:ekr.20161011045426.1: *4* js_i.skip_regex
+    def skip_regex(self, s, i):
+        '''Skip an *actual* regex /'''
+        trace = False # and not g.unitTesting
+        trace_ch = False
+        if trace: g.trace('ENTRY', i, repr(s[i:]))
+        assert s[i] == '/', (i, repr(s))
+        i1 = i
+        i += 1
         while i < len(s):
             progress = i
             ch = s[i]
-            if self.startsComment(s, i):
-                i = self.skipComment(s, i)
-            elif ch in '"\'':
-                i = self.skipString(s, i)
+            if trace and trace_ch: g.trace(repr(ch))
+            if ch == '\\':
+                i += 2
             elif ch == '/':
-                i = self.skipRegex(s, i)
-            # elif ch == '{':
-                # i = self.scanObject(parent, s, i)
-            elif g.match_word(s, i, 'function'):
-                i = self.scanFunction(parent, s, i)
-            else:
                 i += 1
-            assert progress < i, 'i: %d, ch: %s' % (i, repr(s[i]))
-        return i
-    #@+node:ekr.20160122073855.1: *3* jss.scanFunction (new) & helpers
-    def scanFunction(self, parent, s, i):
-        '''scan function(args) { body } and then rescan body.'''
-        trace = True and not g.unitTesting
-        # k1, k2 = g.getLine(s,i)
-        # g.trace(s[k1:k2])
-        i1 = i
-        # Scan backward for '('
-        i2 = i-1
-        while 0 <= i2 and s[i2].isspace():
-            i2 -= 1
-        in_expr = s[i2] == '('
-        assert g.match(s, i, 'function')
-        i += len('function')
-        i = g.skip_ws_and_nl(s, i)
-        i = self.skipId(s, i)
-        i = g.skip_ws_and_nl(s, i)
-        # Skip the argument list.
-        if not g.match(s, i, '('):
-            if trace: g.trace('syntax error: no argument list',i)
-            return i
-        i = self.skipBlock(s, i,'(', ')')
-            # skipBlock skips the ')'
-        if i == len(s):
-            g.trace('no args', g.get_line(s, i))
-            return i
-        # Skip the body.
-        i = g.skip_ws_and_nl(s, i)
-        if not g.match(s, i, '{'):
-            if trace: g.trace('no function body', i)
-            return i
-        block_i1 = i
-        block_i2 = i = self.skipBlock(s, i, '{', '}')
-        j = g.skip_ws_and_nl(s,i)
-        if g.match(s, j, '('):
-            i = g.skip_parens(s, i)
-        if in_expr:
-            j = g.skip_ws_and_nl(s,i)
-            if g.match(s, j, ')'):
-                i = j + 1
-        assert i > i1
-        block_s = s[block_i1+1:block_i2-1].strip()
-        if trace: g.trace('*** rescanning ***\n\n%s\n\n' % block_s)
-        self.scanHelper(parent, block_s)
-        return i
-    #@+node:ekr.20160122110449.1: *4* jss.skipArgs
-    def skipArgs(self, s, i, kind):
-        '''Skip the argument or class list.  Return i, ok
-
-        kind is in ('class','function')'''
-        start = i
-        i = g.skip_ws_and_nl(s, i)
-        if not g.match(s, i, '('):
-            return start, kind == 'class'
-        i = self.skipParens(s, i)
-        # skipParens skips the ')'
-        if i >= len(s):
-            return start, False
-        else:
-            return i, True
-    #@+node:ekr.20160122110306.4: *4* jss.skipSigTail
-    def skipSigTail(self, s, i, kind=None):
-        '''Skip from the end of the arg list to the start of the block.'''
-        trace = False and self.trace
-        i1 = i
-        i = self.skipWs(s, i)
-        for z in self.sigFailTokens:
-            if g.match(s, i, z):
-                if trace: g.trace('failToken', z, 'line', g.skip_line(s, i))
-                return i, False
-        while i < len(s):
-            progress = i
-            if self.startsComment(s, i):
-                i = self.skipComment(s, i)
-            elif g.match(s, i, self.blockDelim1):
-                if trace: g.trace(repr(s[i1: i]))
-                return i, True
+                if i < len(s) and s[i] in 'igm':
+                    i += 1 # Skip modifier.
+                if trace: g.trace('FOUND', i, s[i1:i])
+                return i
             else:
                 i += 1
             assert progress < i
-        if trace: g.trace('no block delim')
-        return i, False
-    #@+node:ekr.20160122102535.1: *3* jss.scanObject (new, not used)
-    def scanObject(self, parent, s, i):
-        '''
-        Scan an object, creating child nodes of prarent for objects that have
-        inner functions.
-        '''
-        assert s[i] == '{'
-        g.trace(s[i:])
-        i1 = i
-        i = self.skipBlock(s, i, '{', '}')
-        if g.match(s, i-1, '}'):
-            g.trace('returns:\n\n%s\n\n' % s[i1: i+1])
-            object_s = s[i1+1:i-1].strip()
-            self.scanHelper(parent, object_s)
-        else:
-            g.trace('==== no object')
-        return i
-    #@+node:ekr.20160122072018.1: *3* jss.putFunction
-    def putFunction(self, s, sigStart, codeEnd, start, parent):
-        '''Create a node of parent for a function defintion.'''
-        trace = False and not g.unitTesting
-        verbose = True
-        # Enter a new function: save the old function info.
-        oldStartSigIndent = self.startSigIndent
-        if self.sigId:
-            headline = self.sigId
-        else:
-            ### g.trace('Can not happen: no sigId')
-            ### headline = 'unknown function'
-            headline = s[sigStart: start]
-        body1, body2 = self.computeBody(s, start, sigStart, codeEnd)
-        body = body1 + body2
-        parent = self.adjustParent(parent, headline)
-        if trace:
-            # pylint: disable=maybe-no-member
-            g.trace('parent', parent and parent.h)
-            if verbose:
-                # g.trace('**body1...\n',body1)
-                g.trace(self.atAutoSeparateNonDefNodes)
-                g.trace('**body...\n%s' % body)
-        # 2010/11/04: Fix wishlist bug 670744.
-        if self.atAutoSeparateNonDefNodes:
-            if body1.strip():
-                if trace: g.trace('head', body1)
-                line1 = g.splitLines(body1.lstrip())[0]
-                line1 = line1.strip() or 'non-def code'
-                self.createFunctionNode(line1, body1, parent)
-                body = body2
-        self.lastParent = self.createFunctionNode(headline, body, parent)
-        # Exit the function: restore the function info.
-        self.startSigIndent = oldStartSigIndent
-    #@+node:ekr.20160122074204.1: *3* jss.endGen
-    def endGen(self, s):
+        return i1 # Don't skip ahead.
+    #@+node:ekr.20171224145755.1: *3* js_i.starts_block
+    func_patterns = [
+        re.compile(r'\)\s*=>\s*\{'),
+        re.compile(r'\bclass\b'),
+        re.compile(r'\bfunction\b'),
+    ]
 
-        g.trace(len(s))
-    #@+node:ekr.20140723122936.18054: *3* jss.skipNewline
-    def skipNewline(self, s, i, kind):
-        '''
-        Skip whitespace and comments up to a newline, then skip the newline.
-        Unlike the base class:
-        - we always skip to a newline, if any.
-        - we do *not* issue an error if no newline is found.
-        '''
-        while i < len(s):
-            progress = i
-            i = self.skipWs(s, i)
-            if self.startsComment(s, i):
-                i = self.skipComment(s, i)
-            else: break
-            assert i > progress
-        if i >= len(s):
-            return len(s)
-        elif g.match(s, i, '\n'):
-            return i + 1
-        else:
-            # A hack, but probably good enough in most cases.
-            while i < len(s) and s[i] in ' \t()};':
-                i += 1
-            if g.match(s, i, '\n'):
-                i += 1
-            return i
+    def starts_block(self, i, lines, new_state, prev_state):
+        '''True if the new state starts a block.'''
+        if new_state.level() <= prev_state.level():
+            return False
+        line = lines[i]
+        for pattern in self.func_patterns:
+            if pattern.search(line) is not None:
+                # g.trace('FOUND:', line.strip())
+                return True
+        return False
+    #@+node:ekr.20161101183354.1: *3* js_i.clean_headline
+    clean_regex_list1 = [
+        re.compile(r'\s*\(?(function\b\s*[\w]*)\s*\('),
+            # (function name (
+        re.compile(r'\s*(\w+\s*\:\s*\(*\s*function\s*\()'),
+            # name: (function (
+        re.compile(r'\s*(?:const|let|var)\s*(\w+\s*(?:=\s*.*)=>)'),
+            # const|let|var name = .* =>
+    ]
+    clean_regex_list2 = [
+        re.compile(r'(.*\=)(\s*function)'),
+            # .* = function
+    ]
+    clean_regex_list3 = [
+        re.compile(r'(.*\=\s*new\s*\w+)\s*\(.*(=>)'),
+            # .* = new name .* =>
+        re.compile(r'(.*)\=\s*\(.*(=>)'),
+            # .* = ( .* =>
+        re.compile(r'(.*)\((\s*function)'),
+            # .* ( function
+        re.compile(r'(.*)\(.*(=>)'),
+            # .* ( .* =>
+        re.compile(r'(.*)(\(.*\,\s*function)'),
+            # .* \( .*, function
+    ]
+    clean_regex_list4 = [
+        re.compile(r'(.*)\(\s*(=>)'),
+            # .* ( =>
+    ]
+
+    def clean_headline(self, s, p=None, trace=False):
+        '''Return a cleaned up headline s.'''
+        # pylint: disable=arguments-differ
+        s = s.strip()
+        # Don't clean a headline twice.
+        if s.endswith('>>') and s.startswith('<<'):
+            return s
+        for ch in '{(=':
+            if s.endswith(ch):
+                s = s[:-1].strip()
+        # First regex cleanup. Use \1.
+        for pattern in self.clean_regex_list1:
+            m = pattern.match(s)
+            if m:
+                s = m.group(1)
+                if trace: g.trace('match 1', pattern)
+                break
+        # Second regex cleanup. Use \1 + \2
+        for pattern in self.clean_regex_list2:
+            m = pattern.match(s)
+            if m:
+                s = m.group(1) + m.group(2)
+                if trace: g.trace('match 2', pattern)
+                break
+        # Third regex cleanup. Use \1 + ' ' + \2
+        for pattern in self.clean_regex_list3:
+            m = pattern.match(s)
+            if m:
+                s = m.group(1) + ' ' + m.group(2)
+                if trace: g.trace('match 3', pattern)
+                break
+        # Fourth cleanup. Use \1 + ' ' + \2 again
+        for pattern in self.clean_regex_list4:
+            m = pattern.match(s)
+            if m:
+                s = m.group(1) + ' ' + m.group(2)
+                if trace: g.trace('match 4', pattern)
+                break
+        # Final whitespace cleanups.
+        s = s.replace('  ', ' ')
+        s = s.replace(' (', '(')
+        return g.truncate(s, 100)
     #@-others
+#@+node:ekr.20161105092745.1: ** class JS_ScanState
+class JS_ScanState:
+    '''A class representing the state of the javascript line-oriented scan.'''
+
+    def __init__(self, d=None):
+        '''JS_ScanState ctor'''
+        if d:
+            # d is *different* from the dict created by i.scan_line.
+            self.context = d.get('context')
+            self.curlies = d.get('curlies')
+            self.parens = d.get('parens')
+        else:
+            self.context = ''
+            self.curlies = self.parens = 0
+
+    def __repr__(self):
+        '''JS_ScanState.__repr__'''
+        return 'JS_ScanState context: %r curlies: %s parens: %s' % (
+            self.context, self.curlies, self.parens)
+
+    __str__ = __repr__
+
+    #@+others
+    #@+node:ekr.20161119115505.1: *3* js_state.level
+    def level(self):
+        '''JS_ScanState.level.'''
+        return (self.curlies, self.parens)
+    #@+node:ekr.20161119051049.1: *3* js_state.update
+    def update(self, data):
+        '''
+        Update the state using the 6-tuple returned by i.scan_line.
+        Return i = data[1]
+        '''
+        context, i, delta_c, delta_p, delta_s, bs_nl = data
+        # self.bs_nl = bs_nl
+        self.context = context
+        self.curlies += delta_c
+        self.parens += delta_p
+        # self.squares += delta_s
+        return i
+
+    #@-others
+
 #@-others
 importer_dict = {
-    'class': JavaScriptScanner,
+    'class': JS_Importer,
     'extensions': ['.js',],
 }
+#@@language python
+#@@tabwidth -4
 #@-leo

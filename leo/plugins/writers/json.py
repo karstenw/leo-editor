@@ -15,7 +15,7 @@ class JSON_Writer(basewriter.BaseWriter):
     # No ctor.
     #@+others
     #@+node:ekr.20160504083330.3: *3* json.write
-    def write(self, root, forceSentinels=False):
+    def write(self, root):
         """Write all the @auto-json node."""
         nodes = list(set([p.v for p in root.subtree()]))
         nodes = [self.vnode_dict(v) for v in nodes]
@@ -23,6 +23,8 @@ class JSON_Writer(basewriter.BaseWriter):
             'top': self.vnode_dict(root.v),
             'nodes': nodes,
         }
+        # pylint: disable=no-member
+        # pylint confuses this module with the stdlib json module
         s = json.dumps(d,
             sort_keys=True,
             indent=2, # Pretty print.
@@ -46,4 +48,6 @@ writer_dict = {
     'class': JSON_Writer,
     'extensions': ['.json',],
 }
+#@@language python
+#@@tabwidth -4
 #@-leo

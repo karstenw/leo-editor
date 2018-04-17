@@ -77,7 +77,7 @@ class VimCommands(object):
         # Add all entries in arrow dict to the other dicts.
         vc.arrow_d = arrow_d = vc.create_arrow_d()
         for d, tag in ((d1, 'normal'), (d2, 'motion'), (d3, 'visual')):
-            for key in arrow_d.keys():
+            for key in arrow_d:
                 if key in d:
                     g.trace('duplicate arrow key in %s dict: %s' % (tag, key))
                 else:
@@ -86,7 +86,7 @@ class VimCommands(object):
             # Check for conflicts between motion dict (d2) and the normal and visual dicts.
             # These are not necessarily errors, but are useful for debugging.
             for d, tag in ((d1, 'normal'), (d3, 'visual')):
-                for key in d2.keys():
+                for key in d2:
                     f, f2 = d.get(key), d2.get(key)
                     if f2 and f and f != f2:
                         g.trace('conflicting motion key in %s dict: %s %s %s' % (
@@ -549,6 +549,14 @@ class VimCommands(object):
         '''Print a not ready message and quit.'''
         g.es('not ready', g.callers(1))
         vc.quit()
+    #@+node:ekr.20160918060654.1: *5* vc.on_activate
+    def on_activate(vc):
+        '''Handle an activate event.'''
+        # Fix #270: Vim keys don't always work after double Alt+Tab.
+        vc.quit()
+        vc.show_status()
+        # This seems not to be needed.
+        # vc.c.k.keyboardQuit(setFocus=True)
     #@+node:ekr.20140802120757.17999: *5* vc.quit
     def quit(vc):
         '''
@@ -2135,8 +2143,6 @@ class VimCommands(object):
     @cmd(':q!')
     def quit_now(vc, event=None):
         '''Quit immediately.'''
-        for c in g.app.commanders():
-            g.app.forgetOpenFile(c.fileName(), force=True)
         g.app.forceShutdown()
     #@+node:ekr.20150509050918.1: *4* vc.r_command
     @cmd(':r')

@@ -15,40 +15,58 @@ On Ubuntu, the following alias runs this file::
 #@@language python
 # pylint: disable=invalid-name
     # pylint-leo isn't a valid module name, but it isn't a module.
+from __future__ import print_function
 import leo.core.leoGlobals as g
 import leo.core.leoTest as leoTest
+import shlex
 import optparse
 import os
+import subprocess
 import sys
 import time
 #@+others
-#@+node:ekr.20140331201252.16859: ** main & helpers
+#@+node:ekr.20140331201252.16859: ** main (pylint-leo.py)
 def main(files, verbose):
     '''Call run on all tables in tables_table.'''
+    n = len(files)
+    print('pylint: %s file%s' % (n, g.plural(n)))
     try:
         from pylint import lint
         assert lint
     except ImportError:
         print('pylint-leo.py: can not import pylint')
         return
-    t1 = time.clock()
+    t1 = time.time()
     for fn in files:
         run(fn, verbose)
-    t2 = time.clock()
-    n = len(files)
+        if not verbose and sys.platform.startswith('win'):
+            print('.',sep='', end='')
+    t2 = time.time()
     print('%s file%s, time: %5.2f sec.' % (n, g.plural(n), t2-t1))
-#@+node:ekr.20100221142603.5644: *3* run (pylint-leo.py)
+#@+node:ekr.20100221142603.5644: ** run (pylint-leo.py)
 #@@nobeautify
 
 def run(fn, verbose):
     '''Run pylint on fn.'''
-    trace = False and not g.unitTesting
     # theDir is empty for the -f option.
     from pylint import lint
     assert lint
-    rc_fn = os.path.abspath(os.path.join('leo','test','pylint-leo-rc.txt'))
-    if not os.path.exists(rc_fn):
-        print('pylint rc file not found: %s' % (rc_fn))
+    # Note: g.app does not exist.
+    base_dir = os.path.dirname(__file__)
+    home_dir = os.path.expanduser('~') if hasattr(os.path, 'expanduser') else ''
+    rc_fn = 'pylint-leo-rc.txt'
+    table = (
+        os.path.abspath(os.path.join(home_dir, '.leo', rc_fn)),
+        os.path.abspath(os.path.join(base_dir, 'leo', 'test', rc_fn)),
+    )
+    for rc_fn in table:
+        if os.path.exists(rc_fn):
+            break
+    else:
+        print('pylint-leo.py: %s not found in leo/test or ~/.leo.' % (rc_fn))
+        return
+    if not os.path.exists(fn):
+        print('pylint-leo.py: file not found: %s' % (fn))
         return
     if verbose:
         path = g.os_path_dirname(fn)
@@ -56,29 +74,46 @@ def run(fn, verbose):
         theDir = dirs and dirs[-1] or ''
         print('pylint-leo.py: %s%s%s' % (theDir,os.sep,g.shortFileName(fn)))
     # Call pylint in a subprocess so Pylint doesn't abort *this* process.
-    args = ','.join([
-        "fn=r'%s'" % (fn),
-        "rc=r'%s'" % (rc_fn),
-    ])
-    if 0: # Prints error number.
-        args.append('--msg-template={path}:{line}: [{msg_id}({symbol}), {obj}] {msg}')
-    command = '%s -c "import leo.core.leoGlobals as g; g.run_pylint(%s)"' % (
-        sys.executable, args)
-    t1 = time.clock()
-    g.execute_shell_commands(command)
-    t2 = time.clock()
-    if trace:
-        g.trace('%4.2f %s' % (t2-t1, g.shortFileName(fn)))
-#@+node:ekr.20140526142452.17594: ** report_version
+    if 1: # Invoke pylint directly.
+        # Escaping args is harder here because we are creating an args array.
+        is_win = sys.platform.startswith('win')
+        args =  ','.join(["'--rcfile=%s'" % (rc_fn), "'%s'" % (fn)])
+        if is_win:
+            args = args.replace('\\','\\\\')
+        command = '%s -c "from pylint import lint; args=[%s]; lint.Run(args)"' % (
+            sys.executable, args)
+        if not is_win:
+            command = shlex.split(command)
+    else:
+        # Use g.run_pylint.
+        args = ','.join(["fn=r'%s'" % (fn), "rc=r'%s'" % (rc_fn)])
+        command = '%s -c "import leo.core.leoGlobals as g; g.run_pylint(%s)"' % (
+            sys.executable, args)
+    # g.trace('===== pylint-leo.run: %s' % command)
+    # If shell is True, it is recommended to pass args as a string rather than as a sequence.
+    proc = subprocess.Popen(command, shell=False)
+    proc.communicate()
+        # Wait: Not waiting is confusing for the user.
+#@+node:ekr.20140526142452.17594: ** report_version (pylint-leo.py)
 def report_version():
     try:
         from pylint import lint
-        rc_fn = os.path.abspath(os.path.join('leo', 'test', 'pylint-leo-rc.txt'))
-        rc_fn = rc_fn.replace('\\', '/')
-        lint.Run(["--rcfile=%s" % (rc_fn), '--version',])
     except ImportError:
         g.trace('can not import pylint')
-#@+node:ekr.20120307142211.9886: ** scanOptions
+    table = (
+        os.path.abspath(os.path.expanduser('~/.leo/pylint-leo-rc.txt')),
+        os.path.abspath(os.path.join('leo', 'test', 'pylint-leo-rc.txt')),
+    )
+    for rc_fn in table:
+        try:
+            rc_fn = rc_fn.replace('\\', '/')
+            lint.Run(["--rcfile=%s" % (rc_fn), '--version',])
+        except OSError:
+            pass
+    g.trace('no rc file found in')
+    g.printList(table)
+
+#@+node:ekr.20120307142211.9886: ** scanOptions (pylint-leo.py)
 def scanOptions():
     '''Handle all options, remove them from sys.argv.'''
     global g_option_fn

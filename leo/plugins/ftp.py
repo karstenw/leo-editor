@@ -3,12 +3,18 @@
 '''Uploading of file by ftp.'''
 
 # 0.1 05.01.2011 by Ivanov Dmitriy.
+#@+<< ftp imports >>
+#@+node:ekr.20161223150819.1: ** << ftp imports >>
 import leo.core.leoGlobals as g
 import leo.core.leoPlugins as leoPlugins
-from leo.core.leoQt import QtGui
+from leo.core.leoQt import isQt5,QtGui,QtWidgets
+if 1:
+     # pylint: disable=no-name-in-module,no-member
+    QAction = QtWidgets.QAction if isQt5 else QtGui.QAction
 import json
 import os
 from ftplib import FTP
+#@-<< ftp imports >>
 #@+others
 #@+node:ekr.20110110105526.5467: ** init
 def init ():
@@ -36,13 +42,11 @@ class pluginController(object):
     #@+node:ekr.20110110105526.5470: *3* __init__(pluginController, ftp.py)
     def __init__ (self,c):
         self.c = c
-    #@+at
-    #     c.k.registerCommand('upload',shortcut=None,func=self.upload)
-    #     script = "c.k.simulateCommand('upload')"
-    #     g.app.gui.makeScriptButton(c,script=script,buttonText='Upload')
-    #@@c
+        # c.k.registerCommand('upload',self.upload)
+        # script = "c.k.simulateCommand('upload')"
+        # g.app.gui.makeScriptButton(c,script=script,buttonText='Upload')
         ib_w = self.c.frame.iconBar.w
-        action = QtGui.QAction('Upload', ib_w)
+        action = QAction('Upload', ib_w)
         self.c.frame.iconBar.add(qaction = action, command = self.upload)
 
 

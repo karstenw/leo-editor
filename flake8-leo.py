@@ -22,14 +22,17 @@ import time
 #@+node:ekr.20160517182239.10: ** main & helpers
 def main(files):
     '''Call run on all tables in tables_table.'''
-    from flake8 import engine
+    try:
+        from flake8 import engine
+    except Exception:
+        print('can not import flake8')
     config_file = get_flake8_config()
     if config_file:
         style = engine.get_style_guide(
             parse_argv=False, config_file=config_file)
-        t1 = time.clock()
+        t1 = time.time()
         check_all(files, style)
-        t2 = time.clock()
+        t2 = time.time()
         n = len(files)
         print('%s file%s, time: %5.2f sec.' % (n, g.plural(n), t2-t1))
 #@+node:ekr.20160517222900.1: *3* get_home

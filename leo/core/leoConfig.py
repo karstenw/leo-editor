@@ -5,11 +5,11 @@
 #@+<< imports >>
 #@+node:ekr.20041227063801: ** << imports >> (leoConfig)
 import leo.core.leoGlobals as g
-from leo.core.leoNodes import VNode
+# from leo.core.leoNodes import VNode
 from leo.plugins.mod_scripting import build_rclick_tree
 import os
 import sys
-from copy import deepcopy
+# from copy import deepcopy
 #@-<< imports >>
 #@+<< class ParserBaseClass >>
 #@+node:ekr.20041119203941.2: ** << class ParserBaseClass >>
@@ -22,16 +22,16 @@ class ParserBaseClass(object):
     basic_types = [
         # Headlines have the form @kind name = var
         'bool', 'color', 'directory', 'int', 'ints',
-        'float', 'path', 'ratio', 'shortcut', 'string', 'strings']
+        'float', 'path', 'ratio', 'string', 'strings']
     control_types = [
-        'abbrev', 'buttons',
+        'buttons',
         'commands', 'data',
         'enabledplugins', 'font',
         'ifenv', 'ifhostname', 'ifplatform',
-        # 'if','ifgui',
         'ignore',
         'menus', 'mode', 'menuat',
-        'openwith', 'outlinedata', 'page', 'popup',
+        'openwith', 'outlinedata',
+        'popup',
         'settings', 'shortcuts',
         ]
     # Keys are settings names, values are (type,value) tuples.
@@ -55,7 +55,6 @@ class ParserBaseClass(object):
             # A list of dicts containing 'name','shortcut','command' keys.
         # Keys are canonicalized names.
         self.dispatchDict = {
-            'abbrev':       self.doAbbrev, # New in 4.4.1 b2.
             'bool':         self.doBool,
             'buttons':      self.doButtons, # New in 4.4.4
             'color':        self.doColor,
@@ -64,8 +63,6 @@ class ParserBaseClass(object):
             'directory':    self.doDirectory,
             'enabledplugins': self.doEnabledPlugins,
             'font':         self.doFont,
-            # 'if':         self.doIf, # Removed in 5.2 b1.
-            # 'ifgui':      self.doIfGui,  # Removed in 4.4 b3.
             'ifenv':        self.doIfEnv, # New in 5.2 b1.
             'ifhostname':   self.doIfHostname,
             'ifplatform':   self.doIfPlatform,
@@ -80,9 +77,7 @@ class ParserBaseClass(object):
             'openwith':     self.doOpenWith, # New in 4.4.3 b1.
             'outlinedata':  self.doOutlineData, # New in 4.11.1.
             'path':         self.doPath,
-            'page':         self.doPage,
             'ratio':        self.doRatio,
-            # 'shortcut':   self.doShortcut, # Removed in 4.4.1 b1.
             'shortcuts':    self.doShortcuts,
             'string':       self.doString,
             'strings':      self.doStrings,
@@ -122,17 +117,6 @@ class ParserBaseClass(object):
         # Does not work at present because we are using a null Gui.
         g.blue(s)
     #@+node:ekr.20041120094940: *3* kind handlers (ParserBaseClass)
-    #@+node:ekr.20060608221203: *4* doAbbrev
-    def doAbbrev(self, p, kind, name, val):
-        d = {}
-        s = p.b
-        lines = g.splitLines(s)
-        for line in lines:
-            line = line.strip()
-            if line and not g.match(line, 0, '#'):
-                name, val = self.parseAbbrevLine(line)
-                if name: d[val] = name
-        self.set(p, 'abbrev', 'abbrev', d)
     #@+node:ekr.20041120094940.1: *4* doBool
     def doBool(self, p, kind, name, val):
         if val in ('True', 'true', '1'):
@@ -141,7 +125,7 @@ class ParserBaseClass(object):
             self.set(p, kind, name, False)
         else:
             self.valueError(p, kind, name, val)
-    #@+node:ekr.20070925144337: *4* doButtons
+    #@+node:ekr.20070925144337: *4* doButtons (ParserBaseClass)
     def doButtons(self, p, kind, name, val):
         '''Create buttons for each @button node in an @buttons tree.'''
         trace = False and not g.unitTesting
@@ -172,7 +156,7 @@ class ParserBaseClass(object):
         if aList:
             g.app.config.atCommonButtonsList.extend(aList)
                 # Bug fix: 2011/11/24: Extend the list, don't replace it.
-            g.app.config.buttonsFileName = c and c.shortFileName() or '<no settings file>'
+            g.app.config.buttonsFileName = c.shortFileName() if c else '<no settings file>'
         if trace: g.trace(c.shortFileName(), '[%s]' % ','.join([z[0].h for z in aList]))
         d, key = g.app.config.unitTestDict, 'config.doButtons-file-names'
         aList = d.get(key, [])
@@ -236,22 +220,19 @@ class ParserBaseClass(object):
         # New in Leo 4.11: do not strip lines.
         data = self.getOutlineDataHelper(p)
         self.set(p, kind, name, data)
+        return 'skip'
     #@+node:ekr.20131114051702.16546: *5* getOutlineDataHelper
     def getOutlineDataHelper(self, p):
         c = self.c
         if not p: return None
-        old_p = c.p
-        c.selectPosition(p)
         try:
             # Copy the entire tree to s.
             c.fileCommands.leo_file_encoding = 'utf-8'
-            s = c.fileCommands.putLeoOutline()
+            s = c.fileCommands.putLeoOutline(p)
             s = g.toUnicode(s, encoding='utf-8')
         except Exception:
             g.es_exception()
             s = None
-        finally:
-            if old_p: c.selectPosition(old_p)
         return s
     #@+node:ekr.20041120094940.3: *4* doDirectory & doPath
     def doDirectory(self, p, kind, name, val):
@@ -274,7 +255,7 @@ class ParserBaseClass(object):
         s = ''.join(aList)
         # Set the global config ivars.
         g.app.config.enabledPluginsString = s
-        g.app.config.enabledPluginsFileName = c and c.shortFileName() or '<no settings file>'
+        g.app.config.enabledPluginsFileName = c.shortFileName() if c else '<no settings file>'
         # g.trace('\n%s' % (s),g.app.config.enabledPluginsFileName)
     #@+node:ekr.20041120094940.6: *4* doFloat
     def doFloat(self, p, kind, name, val):
@@ -297,13 +278,6 @@ class ParserBaseClass(object):
                 setKind = key
                 self.set(p, setKind, name, val)
                 if trace and val not in (None, 'none', 'None'): g.trace(key, val)
-    #@+node:ekr.20041120103933: *4* doIf (not supported)
-    if 0:
-        # Not supported. Use @ifenv instead.
-
-        def doIf(self, p, kind, name, val):
-            g.trace("'if' not supported yet")
-            return None
     #@+node:ekr.20150426034813.1: *4* doIfEnv
     def doIfEnv(self, p, kind, name, val):
         '''
@@ -325,20 +299,6 @@ class ParserBaseClass(object):
                 return None
         if trace: g.trace('disabled', name, env, aList[1:])
         return 'skip'
-    #@+node:ekr.20041121125416: *4* doIfGui (not supported)
-    if 0:
-        # This might work now that Leo supports the --gui command-line argument.
-        # However, it is not needed.
-
-        def doIfGui(self, p, kind, name, val):
-            if not g.app.gui or not g.app.gui.guiName():
-                s = '@if-gui has no effect: g.app.gui not defined yet'
-                g.warning(s)
-                return "skip"
-            elif g.app.gui.guiName().lower() == name.lower():
-                return None
-            else:
-                return "skip"
     #@+node:dan.20080410121257.2: *4* doIfHostname
     def doIfHostname(self, p, kind, name, val):
         '''
@@ -368,13 +328,18 @@ class ParserBaseClass(object):
     #@+node:ekr.20041120104215: *4* doIfPlatform
     def doIfPlatform(self, p, kind, name, val):
         '''Support @ifplatform in @settings trees.'''
-        trace = False
+        trace = False and not g.unitTesting
         platform = sys.platform.lower()
+        if trace:
+            g.trace(g.callers(verbose=True))
+            child = p and p.firstChild()
+            child_h = child.h if child else 'No Child'
         for s in name.split(','):
             if platform == s.lower():
-                if trace: g.trace('enable', s)
+                if trace:
+                    g.trace('===== enable', s, p.h, 'child', child_h)
                 return None
-        if trace: g.trace('disable', name)
+        if trace: g.trace('===== disable', name, p.h, 'child', child_h)
         return "skip"
     #@+node:ekr.20041120104215.1: *4* doIgnore
     def doIgnore(self, p, kind, name, val):
@@ -423,7 +388,9 @@ class ParserBaseClass(object):
         '''Handle @menuat setting.'''
         trace = False and not g.unitTesting
         if g.app.config.menusList:
-            if trace: g.es_print("Patching menu tree: " + name)
+            if trace:
+                g.es_print("Patching menu tree: " + name)
+                g.es_print(self.c)
             # get the patch fragment
             patch = []
             if p.hasChildren():
@@ -439,7 +406,9 @@ class ParserBaseClass(object):
                 targetPath = '/' + targetPath
             ans = self.patchMenuTree(g.app.config.menusList, targetPath)
             if ans:
-                if trace: g.es_print("Patching (" + mode + ' ' + source + ") at " + targetPath)
+                if trace:
+                    # g.es_print("Patching (" + mode + ' ' + source + ") at " + targetPath)
+                    g.es_print("Patching (%s %s) at %s" % (mode, source, targetPath))
                 # pylint: disable=unpacking-non-sequence
                 list_, idx = ans
                 if mode not in ('copy', 'cut'):
@@ -497,19 +466,20 @@ class ParserBaseClass(object):
                 self.dumpMenuTree(val, level + 1, path=path + '/' + name)
     #@+node:tbrown.20080514180046.8: *5* patchMenuTree
     def patchMenuTree(self, orig, targetPath, path=''):
+        trace = False and not g.unitTesting
         for n, z in enumerate(orig):
             kind, val, val2 = z
             if kind == '@item':
                 name = self.getName(val, val2)
                 curPath = path + '/' + name
                 if curPath == targetPath:
-                    g.es_print('Found ' + targetPath)
+                    if trace: g.es_print('Found ' + targetPath)
                     return orig, n
             else:
                 name = self.getName(kind.replace('@menu ', ''))
                 curPath = path + '/' + name
                 if curPath == targetPath:
-                    g.es_print('Found ' + targetPath)
+                    if trace: g.es_print('Found ' + targetPath)
                     return orig, n
                 ans = self.patchMenuTree(val, targetPath, path=path + '/' + name)
                 if ans:
@@ -558,16 +528,18 @@ class ParserBaseClass(object):
                 g.app.config.menusFileName = name
     #@+node:ekr.20070926141716: *5* doItems
     def doItems(self, p, aList):
-        trace = False and g.isPython3
+        trace = False and not g.unitTesting
         if trace: g.trace(p.h)
         p = p.copy()
         after = p.nodeAfterTree()
         p.moveToThreadNext()
-        if trace: g.trace(self.debug_count, p.h, 'after', after and after.h)
+        if trace:
+            g.trace(p.h)
+            # g.trace(self.debug_count, p.h, 'after', after and after.h)
         while p and p != after:
             self.debug_count += 1
             h = p.h
-            for tag in ('@menu', '@item'):
+            for tag in ('@menu', '@item', '@ifplatform'):
                 if g.match_word(h, 0, tag):
                     itemName = h[len(tag):].strip()
                     if itemName:
@@ -581,8 +553,7 @@ class ParserBaseClass(object):
                         else:
                             kind = tag
                             head = itemName
-                            # body = p.b
-                            # 4.11.1: Only the first body line is significant.
+                            # Only the first body line is significant.
                             # This allows following comment lines.
                             lines = [z for z in g.splitLines(p.b) if z.strip()]
                             body = lines[0] if lines else ''
@@ -644,6 +615,7 @@ class ParserBaseClass(object):
             self.createModeCommand(modeName, name1, d)
     #@+node:ekr.20070411101643.1: *4* doOpenWith (ParserBaseClass)
     def doOpenWith(self, p, kind, name, val):
+        trace = False and not g.unitTesting
         # g.trace(self.c.shortFileName(),'kind',kind,'name',name,'val',val)
         d = self.parseOpenWith(p)
         d['name'] = name
@@ -651,10 +623,10 @@ class ParserBaseClass(object):
         # g.trace('command',d.get('command'))
         name = kind = 'openwithtable'
         self.openWithList.append(d)
+        if trace:
+            g.trace(p.h)
+            g.printList(self.openWithList)
         self.set(p, kind, name, self.openWithList)
-    #@+node:ekr.20041120104215.2: *4* doPage
-    def doPage(self, p, kind, name, val):
-        pass # Ignore @page this while parsing settings.
     #@+node:bobjack.20080324141020.4: *4* doPopup & helper
     def doPopup(self, p, kind, name, val):
         """
@@ -717,9 +689,18 @@ class ParserBaseClass(object):
             line = line.strip()
             if line and not g.match(line, 0, '#'):
                 commandName, si = self.parseShortcutLine(fn, line)
-                assert g.isShortcutInfo(si), si
-                if si and si.stroke not in (None, 'none', 'None'):
-                    self.doOneShortcut(si, commandName, p)
+                if si is None: # Fix #718.
+                    print('\nWarning: bad shortcut specifier: %r\n' % line)
+                else:
+                    assert g.isShortcutInfo(si), si
+                    if si and si.stroke not in (None, 'none', 'None'):
+                        self.doOneShortcut(si, commandName, p)
+                    else:
+                        # New in Leo 5.7: Add local assignments to None to c.k.killedBindings.
+                        if c.config.isLocalSettingsFile():
+                            if trace: g.trace('%s: killing binding to %s' % (
+                                c.shortFileName(), commandName))
+                            c.k.killedBindings.append(commandName)
         if trace: g.trace(
             len(list(self.shortcutsDict.keys())), c.shortFileName(), p.h)
     #@+node:ekr.20111020144401.9585: *5* doOneShortcut (ParserBaseClass)
@@ -842,11 +823,13 @@ class ParserBaseClass(object):
                         val = s[j + 1:].strip()
         # g.trace("%50s %10s %s" %(name,kind,val))
         return kind, name, val
-    #@+node:ekr.20070411101643.2: *4* parseOpenWith & helper
+    #@+node:ekr.20070411101643.2: *4* parseOpenWith & helper (ParserBaseClass)
     def parseOpenWith(self, p):
+        trace = False and not g.unitTesting
         d = {'command': None}
-            # Old: command is a tuple.
-            # New: d contains args, kind, etc tags.
+           # d contains args, kind, etc tags.
+        if trace:
+            g.trace(p.h)
         for line in g.splitLines(p.b):
             self.parseOpenWithLine(line, d)
         return d
@@ -906,8 +889,13 @@ class ParserBaseClass(object):
             if trace: g.trace('-->', entryCommandName)
             return None, g.ShortcutInfo('*entry-command*', commandName=entryCommandName)
         j = i
-        i = g.skip_id(s, j, '-') # New in 4.4: allow Emacs-style shortcut names.
+        i = g.skip_id(s, j, '-@') # #718.
         name = s[j: i]
+        # #718: Allow @button- and @command- prefixes.
+        for tag in ('@button-', '@command-'):
+            if name.startswith(tag):
+                name = name[len(tag):]
+                break
         if not name:
             if trace: g.trace('no name', repr(s))
             return None, None
@@ -939,25 +927,6 @@ class ParserBaseClass(object):
         si = g.ShortcutInfo(kind=kind, nextMode=nextMode, pane=pane, stroke=stroke)
         if trace: g.trace('%25s %s' % (name, si))
         return name, si
-    #@+node:ekr.20060608222828: *4* parseAbbrevLine (ParserBaseClass)
-    def parseAbbrevLine(self, s):
-        '''Parse an abbreviation line:
-        command-name = abbreviation
-        return (command-name,abbreviation)
-        '''
-        i = j = g.skip_ws(s, 0)
-        i = g.skip_id(s, i, '-') # New in 4.4: allow Emacs-style shortcut names.
-        name = s[j: i]
-        if not name: return None, None
-        i = g.skip_ws(s, i)
-        if not g.match(s, i, '='): return None, None
-        i = g.skip_ws(s, i + 1)
-        val = s[i:].strip()
-        # Ignore comments after the shortcut.
-        i = val.find('#')
-        if i > -1: val = val[: i].strip()
-        if val: return name, val
-        else: return None, None
     #@+node:ekr.20041120094940.9: *3* set (ParserBaseClass)
     def set(self, p, kind, name, val):
         """Init the setting for name to val."""
@@ -966,7 +935,14 @@ class ParserBaseClass(object):
         c = self.c
         # Note: when kind is 'shortcut', name is a command name.
         key = self.munge(name)
-        # if kind and kind.startswith('setting'): g.trace("settingsParser %10s %15s %s" %(kind,val,name))
+        if key is None:
+            g.es_print('Empty setting name in', p.h in c.fileName())
+            # g.trace("(ParserBaseClass): %r %r %r %s" % (kind,val,name,p.h))
+            parent = p.parent()
+            while parent:
+                g.trace('parent', parent.h)
+                parent.moveToParent()
+            return
         d = self.settingsDict
         gs = d.get(key)
         if gs:
@@ -978,7 +954,7 @@ class ParserBaseClass(object):
         d[key] = g.GeneralSetting(kind, path=c.mFileName, val=val, tag='setting',
             unl=(p and p.get_UNL(with_proto=True)))
     #@+node:ekr.20041119204700.1: *3* traverse (ParserBaseClass)
-    def traverse(self):
+    def traverse(self, theme=False):
         '''Traverse the entire settings tree.'''
         trace = False and not g.unitTesting
         c = self.c
@@ -989,7 +965,7 @@ class ParserBaseClass(object):
             name='shortcutsDict for %s' % (c.shortFileName()),
             keyType=type('s'), valType=g.ShortcutInfo)
         # This must be called after the outline has been inited.
-        p = c.config.settingsRoot()
+        p = c.config.settingsRoot(theme=theme)
         if not p:
             # c.rootPosition() doesn't exist yet.
             # This is not an error.
@@ -1054,7 +1030,6 @@ class GlobalConfigManager(object):
         ("color_directives_in_plain_text", "bool", True),
         ("underline_undefined_section_names", "bool", True),
         # Window options...
-        ("allow_clone_drags", "bool", True),
         ("body_pane_wraps", "bool", True),
         ("body_text_font_family", "family", "Courier"),
         ("body_text_font_size", "size", defaultBodyFontSize),
@@ -1134,8 +1109,8 @@ class GlobalConfigManager(object):
     #@+node:ekr.20041117083202: *3* gcm.Birth...
     #@+node:ekr.20041117062717.2: *4* gcm.ctor
     def __init__(self):
-        trace = (False or g.trace_startup) and not g.unitTesting
-        if trace: g.es_debug('(g.app.config)')
+        trace = False and not g.unitTesting
+        if trace: g.trace('(g.app.config)')
         # Set later.  To keep pylint happy.
         if 0: # No longer needed, now that setIvarsFromSettings always sets gcm ivars.
             self.at_root_bodies_start_in_doc_mode = True
@@ -1220,11 +1195,15 @@ class GlobalConfigManager(object):
     def setIvarsFromSettings(self, c):
         '''Init g.app.config ivars or c's ivars from settings.
 
-        - Called from readSettingsFiles with c = None to init g.app.config ivars.
-        - Called from c.__init__ to init corresponding commmander ivars.'''
+        - Called from c.initSettings with c = None to init g.app.config ivars.
+        - Called from c.initSettings to init corresponding commmander ivars.'''
         trace = False and not g.unitTesting
         verbose = True
-        if not self.inited: return
+        if g.app.loadedThemes:
+            if trace: g.trace('===== Return')
+            return
+        if not self.inited:
+            return
         # Ignore temporary commanders created by readSettingsFiles.
         if trace and verbose: g.trace('*' * 10)
         if trace: g.trace(
@@ -1366,7 +1345,10 @@ class GlobalConfigManager(object):
     #@+node:ekr.20041122070339: *4* gcm.getColor
     def getColor(self, setting):
         '''Return the value of @color setting.'''
-        return self.get(setting, "color")
+        col = self.get(setting, "color")
+        while col and col.startswith('@'):
+            col = self.get(col[1:], "color")
+        return col
     #@+node:ekr.20080312071248.7: *4* gcm.getCommonCommands
     def getCommonAtCommands(self):
         '''Return the list of tuples (headline,script) for common @command nodes.'''
@@ -1377,7 +1359,7 @@ class GlobalConfigManager(object):
         data = self.get(setting, "data")
         # New in Leo 4.12.1: add two keyword arguments, with legacy defaults.
         if data and strip_comments:
-            data = [z for z in data if not z.startswith('#')]
+            data = [z for z in data if not z.strip().startswith('#')]
         if data and strip_data:
             data = [z.strip() for z in data if z.strip()]
         return data
@@ -1480,20 +1462,53 @@ class GlobalConfigManager(object):
         D default settings
         F loaded .leo File
         M myLeoSettings.leo
+        @ @button, @command, @mode.
         '''
+        trace = False and not g.unitTesting
         lm = g.app.loadManager
-        suppressKind = ('shortcut', 'shortcuts', 'openwithtable')
-        suppressKeys = (None, 'shortcut')
         d = c.config.settingsDict if c else lm.globalSettingsDict
+        limit = c.config.getInt('print-settings-at-data-limit')
+        if limit is None:
+            limit = 20 # A resonable default.
+        # pylint: disable=len-as-condition
         for key in sorted(list(d.keys())):
-            if key not in suppressKeys:
-                gs = d.get(key)
-                assert g.isGeneralSetting(gs), gs
-                if gs and gs.kind not in suppressKind:
-                    letter = lm.computeBindingLetter(gs.path)
-                    # g.trace('%3s %40s %s' % (letter,key,gs.val))
-                    yield key, gs.val, c, letter
-        # raise stopIteration
+            gs = d.get(key)
+            assert g.isGeneralSetting(gs), gs
+            if gs and gs.kind:
+                letter = lm.computeBindingLetter(gs.path)
+                val = gs.val
+                if gs.kind == 'data':
+                    # #748: Remove comments
+                    aList = [' '*8 + z.rstrip() for z in val
+                        if z.strip() and not z.strip().startswith('#')]
+                    if trace:
+                        g.trace('@data =====', len(aList), key)
+                        if 0 < len(aList) < limit:
+                            g.printList(aList)
+                    if not aList:
+                        val = '[]'
+                    elif limit == 0 or len(aList) < limit:
+                        val = '\n    [\n' + '\n'.join(aList) + '\n    ]'
+                        # The following doesn't work well.
+                        # val = g.objToString(aList, indent=' '*4)
+                    else:
+                        val = '<%s non-comment lines>' % len(aList)
+                elif g.isString(val) and val.startswith('<?xml'):
+                    val = '<xml>'
+                key2 = '@%-6s %s' % (gs.kind, key)
+                yield key2, val, c, letter
+    #@+node:ekr.20171115062202.1: *3* gcm.valueInMyLeoSettings
+    def valueInMyLeoSettings(self, settingName):
+        '''Return the value of the setting, if any, in myLeoSettings.leo.'''
+        lm = g.app.loadManager
+        d = lm.globalSettingsDict.d
+        gs = d.get(self.munge(settingName))
+            # A GeneralSetting object.
+        if gs:
+            path = gs.path
+            if path.find('myLeoSettings.leo') > -1:
+                return gs.val
+        return None
     #@-others
 #@+node:ekr.20041118104831.1: ** class LocalConfigManager
 class LocalConfigManager(object):
@@ -1502,19 +1517,17 @@ class LocalConfigManager(object):
     #@+node:ekr.20120215072959.12472: *3* c.config.Birth
     #@+node:ekr.20041118104831.2: *4* c.config.ctor
     def __init__(self, c, previousSettings=None):
-        trace = (False or g.trace_startup) and not g.unitTesting
+        trace = False and not g.unitTesting
         if trace: g.es_debug('(c.config)', c and c.shortFileName())
         self.c = c
-        # The shortcuts and settings dicts, set in c.__init__
-        # for local files.
+        lm = g.app.loadManager
+        # c.__init__ and helpers set the shortcuts and settings dicts for local files.
         if previousSettings:
-            # g.trace('(c.config.ctor)',previousSettings)
             self.settingsDict = previousSettings.settingsDict
             self.shortcutsDict = previousSettings.shortcutsDict
             assert g.isTypedDict(self.settingsDict)
             assert g.isTypedDictOfLists(self.shortcutsDict)
         else:
-            lm = g.app.loadManager
             self.settingsDict = d1 = lm.globalSettingsDict
             self.shortcutsDict = d2 = lm.globalShortcutsDict
             assert d1 is None or g.isTypedDict(d1), d1
@@ -1569,25 +1582,30 @@ class LocalConfigManager(object):
     def findSettingsPosition(self, setting):
         """Return the position for the setting in the @settings tree for c."""
         munge = g.app.config.munge
-        c = self.c
+        # c = self.c
         root = self.settingsRoot()
         if not root:
-            return c.nullPosition()
+            return None
         setting = munge(setting)
         for p in root.subtree():
             #BJ munge will return None if a headstring is empty
             h = munge(p.h) or ''
             if h.startswith(setting):
                 return p.copy()
-        return c.nullPosition()
+        return None
     #@+node:ekr.20041120074536: *5* c.config.settingsRoot
-    def settingsRoot(self):
+    def settingsRoot(self, theme=False):
         '''Return the position of the @settings tree.'''
         c = self.c
         for p in c.all_unique_positions():
             if p.h.rstrip() == "@settings":
-                return p.copy()
-        return c.nullPosition()
+                if not theme:
+                    return p.copy()
+                # Look for an inner @theme node
+                for p2 in p.subtree():
+                    if g.match_word(p2.h, 0, '@theme'):
+                        return p2.copy()
+        return None
     #@+node:ekr.20120215072959.12515: *4* c.config.Getters
     #@@nocolor-node
     #@+at Only the following need to be defined.
@@ -1696,7 +1714,10 @@ class LocalConfigManager(object):
     #@+node:ekr.20120215072959.12525: *5* c.config.getColor
     def getColor(self, setting):
         '''Return the value of @color setting.'''
-        return self.get(setting, "color")
+        col = self.get(setting, "color")
+        while col and col.startswith('@'):
+            col = self.get(col[1:], "color")
+        return col
     #@+node:ekr.20120215072959.12527: *5* c.config.getData
     def getData(self, setting, strip_comments=True, strip_data=True):
         '''Return a list of non-comment strings in the body text of @data setting.'''
@@ -1704,7 +1725,7 @@ class LocalConfigManager(object):
         # New in Leo 4.11: parser.doData strips only comments now.
         # New in Leo 4.12: parser.doData strips *nothing*.
         if data and strip_comments:
-            data = [z for z in data if not z.startswith('#')]
+            data = [z for z in data if not z.strip().startswith('#')]
         if data and strip_data:
             data = [z.strip() for z in data if z.strip()]
         return data
@@ -1812,7 +1833,7 @@ class LocalConfigManager(object):
     #@+node:ekr.20120215072959.12539: *5* c.config.getShortcut
     def getShortcut(self, commandName):
         '''Return rawKey,accel for shortcutName'''
-        trace = False and not g.unitTesting
+        trace = False and not g.unitTesting and commandName == 'help'
         c = self.c
         d = self.shortcutsDict
         if not c.frame.menu:
@@ -1872,6 +1893,15 @@ class LocalConfigManager(object):
             if path.endswith(fn.lower()):
                 return False
         return True
+    #@+node:ekr.20171119222458.1: *4* c.config.isLocalSettingsFile (new)
+    def isLocalSettingsFile(self):
+        '''Return true if c is not leoSettings.leo or myLeoSettings.leo'''
+        c = self.c
+        fn = c.shortFileName().lower()
+        for fn2 in ('leoSettings.leo', 'myLeoSettings.leo'):
+            if fn.endswith(fn2.lower()):
+                return False
+        return True
     #@+node:ekr.20120224140548.10528: *4* c.exists (new)
     def exists(self, c, setting, kind):
         '''Return true if a setting of the given kind exists, even if it is None.'''
@@ -1886,6 +1916,7 @@ class LocalConfigManager(object):
         The following shows where the active setting came from:
 
         -     leoSettings.leo,
+        -  @  @button, @command, @mode.
         - [D] default settings.
         - [F] indicates the file being loaded,
         - [M] myLeoSettings.leo,
@@ -1894,6 +1925,7 @@ class LocalConfigManager(object):
         legend = '''\
     legend:
         leoSettings.leo
+     @  @button, @command, @mode
     [D] default settings
     [F] loaded .leo File
     [M] myLeoSettings.leo
@@ -1909,26 +1941,60 @@ class LocalConfigManager(object):
         if g.unitTesting:
             pass # print(''.join(result))
         else:
-            g.es('', ''.join(result), tabName='Settings')
+            g.es_print('', ''.join(result), tabName='Settings')
     #@+node:ekr.20120215072959.12475: *3* c.config.set
-    def set(self, p, kind, name, val):
+    def set(self, p, kind, name, val, warn=True):
         """Init the setting for name to val."""
         trace = False and not g.unitTesting
         if trace: g.trace(kind, name, val)
         c = self.c
         # Note: when kind is 'shortcut', name is a command name.
         key = g.app.config.munge(name)
-        # if kind and kind.startswith('setting'): g.trace("c.config %10s %15s %s" %(kind,val,name))
         d = self.settingsDict
         assert g.isTypedDict(d), d
         gs = d.get(key)
         if gs:
             assert g.isGeneralSetting(gs), gs
             path = gs.path
-            if c.os_path_finalize(c.mFileName) != c.os_path_finalize(path):
+            if warn and c.os_path_finalize(c.mFileName) != c.os_path_finalize(path):
                 g.es("over-riding setting:", name, "from", path)
         gs = g.GeneralSetting(kind, path=c.mFileName, val=val, tag='setting')
         d.replace(key, gs)
+    #@+node:ekr.20180121135120.1: *3* c.config.setUserSetting
+    def setUserSetting(self, setting, value):
+        '''
+        Find and set the indicated setting, either in the local file or in
+        myLeoSettings.leo.
+        '''
+        c = self.c
+        p = self.findSettingsPosition(setting)
+        if not p:
+            c = c.openMyLeoSettings()
+            if not c: return
+            p = c.config.findSettingsPosition(setting)
+        if not p:
+            root = c.config.settingsRoot()
+            if not root: return
+            p = c.config.findSettingsPosition(setting)
+            if not p:
+                p = root.insertAsLastChild()
+        h = setting
+        i = h.find('=')
+        if i > -1:
+            h = h[:i].strip()
+        p.h = '%s = %s' % (h, value)
+        # Delay the second redraw until idle time.
+
+        def handler(timer, c=c, p=p):
+            c.setChanged()
+            p.setDirty()
+            c.selectPosition(p)
+            c.redraw_now()
+            timer.stop()
+
+        timer = g.IdleTime(handler, delay=0, tag='c.config.setUserSetting')
+        if timer:
+            timer.start()
     #@-others
 #@+node:ekr.20041119203941.3: ** class SettingsTreeParser (ParserBaseClass)
 class SettingsTreeParser(ParserBaseClass):
@@ -1975,192 +2041,34 @@ class SettingsTreeParser(ParserBaseClass):
                 g.pr("*** no handler", kind)
         return None
     #@-others
-#@+node:tbrown.20150818161651.1: ** class SettingsFinder
-class SettingsFinder(object):
-    """SettingsFinder - Let the user pick settings from a menu and then
-    find the relevant @settings nodes and open them.
-    """
-
-    def __init__(self, c):
-        """bind to a controller
-
-        :param controller c: outline to bind to
-        """
-        self.c = c
-        self.callbacks = {} # keep track of callbacks made already
-    #@+others
-    #@+node:tbrown.20150818161651.2: *3* _outline_data_build_tree
-    @classmethod
-    def _outline_data_build_tree(cls, node, element, body):
-        """see _outline_data_to_python, this just recursively
-        copies info. from xml to VNode tree"""
-        node.h = element.find('vh').text
-        node.b = ''
-        body[element.get('t')] = node
-        for sub in element.findall('v'):
-            cls._outline_data_build_tree(node.insertAsLastChild(), sub, body)
-    #@+node:tbrown.20150818161651.3: *3* _outline_data_to_python
-    def _outline_data_to_python(self, xml):
-        """_outline_data_to_python - make xml from c.config.getOutlineData()
-        into a detached VNode tree.
-
-        FIXME this should be elsewhere, just here to allow build_menu() to
-        wortk for now.
-
-        :param str xml: xml returned by c.config.getOutlineData()
-        :return: VNode tree representing outline data
-        :rtype: VNode
-        """
-        from xml.etree import ElementTree
-        # FIXME, probably shouldn't be going @settings tree -> xml -> VNode tree,
-        # but @settings tree -> VNode tree, xml + paste to use is cumbersome
-        body = {} # node ID to node mapping to fill in body text later
-        top = VNode(self.c)
-        dom = ElementTree.fromstring(xml)
-        self._outline_data_build_tree(top, dom.find('vnodes').find('v'), body)
-        for t in dom.find('tnodes').findall('t'):
-            if t.text is not None:
-                body[t.get('tx')].b = t.text
-        return top
-    #@+node:tbrown.20150818161651.4: *3* build_menu
-    def build_menu(self):
-        """build_menu - build the menu of settings, called from handleSpecialMenus()
-        """
-        settings_menu = self._outline_data_to_python(
-            self.c.config.getOutlineData("settings-finder-menu"))
-        aList = []
-        self.tree_to_menulist(aList, settings_menu)
-        # aList is [['@outline-data settings-finder-menu', <list of submenus>, None]]
-        # so aList[0][1] is the list of submenus
-        self.c.frame.menu.createMenuFromConfigList("Edit settings", aList[0][1])
-        return aList
-    #@+node:tbrown.20150818162156.1: *3* copy_recursively
-    @staticmethod
-    def copy_recursively(nd0, nd1):
-        """Recursively copy subtree
-        """
-        nd1.h = nd0.h
-        nd1.b = nd0.b
-        nd1.v.u = deepcopy(nd0.v.u)
-        for child in nd0.children():
-            SettingsFinder.copy_recursively(child, nd1.insertAsLastChild())
-    #@+node:tbrown.20150818161651.5: *3* copy_to_my_settings
-    def copy_to_my_settings(self, unl, which):
-        """copy_to_my_settings - copy setting from leoSettings.leo
-
-        :param str unl: Leo UNL to copy from
-        :param int which: 1-3, leaf, leaf's parent, leaf's grandparent
-        :return: unl of leaf copy in myLeoSettings.leo
-        :rtype: str
-        """
-        g.es(unl)
-        path, unl = unl.split('#', 1)
-        unl = unl.replace('%20', ' ').split("-->")
-        tail = []
-        if which > 1: # copying parent or grandparent but select leaf later
-            tail = unl[-(which - 1):]
-        unl = unl[: len(unl) + 1 - which]
-        my_settings_c = self.c.openMyLeoSettings()
-        my_settings_c.save() # if it didn't exist before, save required
-        settings = g.findNodeAnywhere(my_settings_c, '@settings')
-        nd = settings.insertAsLastChild()
-        # c2 = g.openWithFileName(path.replace("file://", ""), old_c=my_settings_c)
-        c2 = g.app.loadManager.openSettingsFile(path.replace("file://", ""))
-        found, maxdepth, maxp = g.recursiveUNLFind(unl, c2)
-        if not found:
-            g.es("Didn't find %s" % unl)
-        dest = nd.get_UNL()
-        self.copy_recursively(maxp, nd)
-        my_settings_c.redraw()
-        shortcutsDict, settingsDict = g.app.loadManager.createSettingsDicts(my_settings_c, False)
-        self.c.config.settingsDict.update(settingsDict)
-        my_settings_c.config.settingsDict.update(settingsDict)
-        g.es('-->'.join([dest] + tail))
-        return '-->'.join([dest] + tail)
-    #@+node:tbrown.20150818161651.6: *3* find_setting
-    def find_setting(self, setting):
-        g.es("Settings finder: find %s" % setting)
-        key = g.app.config.canonicalizeSettingName(setting)
-        value = self.c.config.settingsDict.get(key)
-        which = None
-        while value and value.val and value.val.startswith('@'):
-            msg = ("The relevant setting, '@{specific}', is using the value of "
-            "a more general setting, '{general}'.  Would you like to edit the "
-            "more specific setting, '@{specific}', or the more general setting, "
-            "'{general}'?  The more general setting may alter appearance / "
-            "behavior in more places, which may or may not be what you prefer."
-            ).format(specific=setting, general=value.val)
-            which = g.app.gui.runAskYesNoCancelDialog(self.c, "Which setting?",
-                message=msg, yesMessage='Edit Specific', noMessage='Edit General')
-            if which != 'no':
-                break
-            setting = value.val
-            key = g.app.config.canonicalizeSettingName(setting[1:])
-            value = self.c.config.settingsDict.get(key)
-        if which == 'cancel' or not value:
-            return
-        unl = value and value.unl
-        if (
-            g.os_path_realpath(value.path) == g.os_path_realpath(g.os_path_join(
-            g.app.loadManager.computeGlobalConfigDir(), 'leoSettings.leo')
-        )):
-            msg = ("The setting '@{specific}' is in the Leo global configuration "
-            "file 'leoSettings.leo'\nand should probably be copied to "
-            "'myLeoSettings.leo' before editing.\n"
-            "It may make more sense to copy a group or category of settings.\n\n"
-            "Please enter 1, 2, 3, or 4:\n"
-            "1. copy the one setting, '@{specific}'\n"
-            "2. copy the setting group, '{group}' (Recommended)\n"
-            "3. copy the setting whole category, '{category}'\n"
-            "4. edit the setting in 'leoSettings.leo' anyway\n"
-            ).format(specific=setting.lstrip('@'),
-                group=unl.split('-->')[-2].split(':', 1)[0].replace('%20', ' '),
-                category=unl.split('-->')[-3].split(':', 1)[0].replace('%20', ' '))
-            which = g.app.gui.runAskOkCancelNumberDialog(
-                self.c, "Copy setting?", message=msg)
-            if which is None:
-                return
-            which = int(which) # was float
-            if which < 4:
-                unl = self.copy_to_my_settings(unl, which)
-        if unl:
-            # g.es("Selecting %s" % unl)
-            g.handleUrl(unl, c=self.c)
-    #@+node:tbrown.20150818161651.7: *3* get_command
-    def get_command(self, node):
-        """return the name of a command to find the relevant setting,
-        creating the command if needed
-        """
-        if not node.b.strip():
-            return "settings-find-undefined"
-        setting = node.b.strip()
-        name = "settings-find-%s" % setting
-        if name in self.callbacks:
-            return name
-
-        def f(event, setting=setting, self=self):
-            self.find_setting(setting)
-
-        g.command(name)(f)
-        self.callbacks[name] = f
-        return name
-    #@+node:tbrown.20150818161651.8: *3* settings_find_undefined
-    @g.command("settings-find-undefined")
-    def settings_find_undefined(self, event):
-        g.es("Settings finder: no setting defined")
-    #@+node:tbrown.20150818161651.9: *3* tree_to_menulist
-    def tree_to_menulist(self, aList, node):
-        """recursive helper for build_menu(), copies VNode tree data
-        to list format used by c.frame.menu.createMenuFromConfigList()
-        """
-        if node.children:
-            child_list = []
-            aList.append(["@menu " + node.h, child_list, None])
-            for child in node.children:
-                self.tree_to_menulist(child_list, child)
-        else:
-            aList.append(["@item", self.get_command(node), node.h])
-    #@-others
+#@+node:ekr.20171229131953.1: ** parseFont (leoConfig.py)
+def parseFont(b):
+    family = None
+    weight = None
+    slant = None
+    size = None
+    settings_name = None
+    for line in g.splitLines(b):
+        line = line.strip()
+        if line.startswith('#'): continue
+        i = line.find('=')
+        if i < 0: continue
+        name = line[:i].strip()
+        if name.endswith('_family'):
+            family = line[i+1:].strip()
+        elif name.endswith('_weight'):
+            weight = line[i+1:].strip()
+        elif name.endswith('_size'):
+            size = line[i+1:].strip()
+            try:
+                size = float(size)
+            except ValueError:
+                size = 12
+        elif name.endswith('_slant'):
+            slant = line[i+1:].strip()
+        if settings_name is None and name.endswith(('_family', '_slant', '_weight','_size')):
+            settings_name = name.rsplit('_', 1)[0]
+    return settings_name, family, weight == 'bold', slant in ('slant', 'italic'), size
 #@-others
 #@@language python
 #@@tabwidth -4

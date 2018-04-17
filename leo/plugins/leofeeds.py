@@ -2,7 +2,8 @@
 #@+node:ville.20110206142055.10640: * @file leofeeds.py
 #@+<< docstring >>
 #@+node:ville.20110206142055.10641: ** << docstring >>
-''' Read feeds from rss / atom / whatever sources
+'''
+Read feeds from rss / atom / whatever sources
 
 Usage: Create node with a headline like:
 
@@ -14,36 +15,21 @@ Do alt-x act-on-node on that node to populate the subtree from the feed data. Re
 
 '''
 #@-<< docstring >>
-
-__version__ = '0.1'
-#@+<< version history >>
-#@+node:ville.20110206142055.10642: ** << version history >>
-#@@killcolor
-#@+at
-# 
-# 0.1 Ville M. Vainio:
-# 
-#     * Functional version
-#@-<< version history >>
-
+# By Ville M. Vainio.
 #@+<< imports >>
 #@+node:ville.20110206142055.10643: ** << imports >>
 import leo.core.leoGlobals as g
 
 from leo.core import leoPlugins
     # Uses leoPlugins.TryNext
-
 import feedparser
-import sys
-
-isPython3 = sys.version_info >= (3,0,0)
-
-if isPython3:
+if g.isPython3:
+    # pylint: disable=no-name-in-module
     import html.parser as HTMLParser
 else:
     import HTMLParser
-
 # import pprint
+# import sys
 #@-<< imports >>
 
 #@+others
@@ -67,11 +53,12 @@ def onCreate (tag, keys):
 
 class MLStripper(HTMLParser.HTMLParser):
     # pylint: disable=super-init-not-called
+    # pylint: disable=abstract-method
     def __init__(self):
         self.reset()
         self.fed = []
-    def handle_data(self, d):
-        self.fed.append(d)
+    def handle_data(self, data):
+        self.fed.append(data)
     def get_fed_data(self):
         return ''.join(self.fed)
 
@@ -91,6 +78,8 @@ def emit(r, h, b):
 
 def emitfeed(url, p):
 
+    # pylint: disable=no-member
+    # feedparser *does* have a parse method.
     d = feedparser.parse(url)
     r = p.insertAsLastChild()
     r.h = d.channel.title
@@ -111,7 +100,7 @@ def emitfeed(url, p):
             lnk = chi(e)
             lnk.h = '@url ' + li.rel
             lnk.b = li.href
-        if 'enclosures' in ent:            
+        if 'enclosures' in ent:
             for enc in ent.enclosures:
                 ec = chi(e)
                 ec.h = '@url Enclosure: ' +  enc.get('type','notype') + " " + enc.get('length','')
@@ -128,7 +117,7 @@ def feeds_act_on_node(c,p,event):
     if sp[0] not in ['@feed']:
         raise leoPlugins.TryNext
 
-    emitfeed(sp[1], p)           
+    emitfeed(sp[1], p)
     c.redraw()
 
 def feeds_install():

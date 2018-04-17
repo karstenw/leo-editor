@@ -4,6 +4,7 @@
 import leo.core.leoGlobals as g
 import keyword
 import re
+import time
 import sys
 #@+<< Theory of operation of find/change >>
 #@+node:ekr.20031218072017.2414: ** << Theory of operation of find/change >>
@@ -96,7 +97,7 @@ class SearchWidget(object):
         self.i = i
         self.sel = i, i
 
-    def setAllText(self, s, h=None):
+    def setAllText(self, s):
         self.s = s
         self.i = 0
         self.sel = 0, 0
@@ -117,7 +118,7 @@ class LeoFind(object):
     """The base class for Leo's Find commands."""
     #@+others
     #@+node:ekr.20131117164142.17021: *3* LeoFind.birth
-    #@+node:ekr.20031218072017.3053: *4* LeoFind.__init__ & helpers
+    #@+node:ekr.20031218072017.3053: *4* LeoFind.__init__
     #@@nobeautify
 
     def __init__(self, c):
@@ -132,7 +133,6 @@ class LeoFind(object):
         self.frame = None
         self.k = c.k
         self.re_obj = None
-
         # Options ivars: set by FindTabManager.init.
         self.batch = None
         self.ignore_case = None
@@ -146,7 +146,6 @@ class LeoFind(object):
         self.reverse = None
         self.wrap = None
         self.whole_word = None
-
         # For isearch commands...
         self.stack = [] # Entries are (p,sel)
         self.isearch_ignore_case = None
@@ -154,7 +153,6 @@ class LeoFind(object):
         self.isearch_regexp = None
         self.findTextList = []
         self.changeTextList = []
-
         # Widget ivars...
         self.change_ctrl = None
         self.s_ctrl = SearchWidget()
@@ -163,24 +161,28 @@ class LeoFind(object):
         self.change_text = ""
         self.radioButtonsChanged = False
             # Set by ftm.radio_button_callback
-
+        #
         # Communication betweenfind-def and startSearch
         self.find_def_data = None
             # Saved regular find settings.
         self.find_seen = set()
             # Set of vnodes.
-
+        #
         # Ivars containing internal state...
         self.buttonFlag = False
         self.changeAllFlag = False
         self.findAllFlag = False
+        self.findAllUniqueFlag = False
         self.in_headline = False
             # True: searching headline text.
+        self.match_obj = None
+            # The match object returned for regex or find-all-unique-regex searches.
         self.p = None
             # The position being searched.
             # Never saved between searches!
         self.previous_find_pattern = ''
             # The previous find pattern, used to disable auto-setting ignore-case.
+        self.unique_matches = set()
         self.was_in_headline = None
             # Fix bug: https://groups.google.com/d/msg/leo-editor/RAzVPihqmkI/-tgTQw0-LtwJ
         self.onlyPosition = None
@@ -194,6 +196,8 @@ class LeoFind(object):
         self.wrapPos = None
             # The starting position of the wrapped search.
             # Persists between calls.
+        self.state_on_start_of_search = None
+            # keeps all state data that should be restored once the search is exhausted
     #@+node:ekr.20150509032822.1: *4* LeoFind.cmd (decorator)
     def cmd(name):
         '''Command decorator for the findCommands class.'''
@@ -204,11 +208,17 @@ class LeoFind(object):
         # New in 4.11.1.
         # Must be called when config settings are valid.
         c = self.c
-        self.minibuffer_mode = c.config.getBool('minibuffer-find-mode', default=False)
+        self.reloadSettings()
         # now that configuration settings are valid,
         # we can finish creating the Find pane.
         dw = c.frame.top
         if dw: dw.finishCreateLogPane()
+    #@+node:ekr.20171113164709.1: *4* LeoFind.reloadSettings
+    def reloadSettings(self):
+        '''LeoFind.reloadSettings.'''
+        c = self.c
+        self.ignore_dups = c.config.getBool('find-ignore-duplicates', default=False)
+        self.minibuffer_mode = c.config.getBool('minibuffer-find-mode', default=False)
     #@+node:ekr.20060123065756.1: *3* LeoFind.Buttons (immediate execution)
     #@+node:ekr.20031218072017.3057: *4* find.changeAllButton
     def changeAllButton(self, event=None):
@@ -334,7 +344,8 @@ class LeoFind(object):
         old_p = c.p
         p = c.rootPosition()
         # Required.
-        c.selectPosition(p, enableRedrawFlag=True)
+        c.selectPosition(p)
+        c.redraw()
         c.bodyWantsFocusNow()
         # Set up the search.
         if defFlag:
@@ -410,6 +421,8 @@ class LeoFind(object):
     #@+node:ekr.20150629095511.1: *6* find.restoreAfterFindDef
     def restoreAfterFindDef(self):
         '''Restore find settings in effect before a find-def command.'''
+        # pylint: disable=no-member
+            # Bunch has these members
         b = self.find_def_data # A g.Bunch
         if b:
             self.ignore_case     = b.ignore_case
@@ -470,6 +483,17 @@ class LeoFind(object):
     def changeAllCommand(self, event=None):
         self.setup_command()
         self.changeAll()
+        # Fixes: #722 replace-all leaves unsaved changed files
+        c = self.c
+        dirtyvnodes = [v for v in c.fileCommands.gnxDict.values() if v.isDirty()]
+        def propagate(v):
+            for v1 in v.parents:
+                if not v1.isDirty():
+                    v1.setDirty()
+                    propagate(v1)
+        for v in dirtyvnodes:
+            propagate(v)
+
     #@+node:ekr.20150629072547.1: *4* find.preloadFindPattern
     def preloadFindPattern(self, w):
         '''Preload the find pattern from the selected text of widget w.'''
@@ -511,7 +535,9 @@ class LeoFind(object):
     #@+node:ekr.20131119060731.22452: *4* find.startSearch
     @cmd('start-search')
     def startSearch(self, event):
+        trace = False and not g.unitTesting
         w = self.editWidget(event)
+        if trace: g.trace('(LeoFind) w:', w)
         if w:
             self.preloadFindPattern(w)
         self.find_seen = set()
@@ -521,6 +547,14 @@ class LeoFind(object):
         else:
             self.openFindTab(event)
             self.ftm.init_focus()
+    #@+node:vitalije.20170712162056.1: *4* find.returnToOrigin
+    @cmd('search-return-to-origin')
+    def returnToOrigin(self, event):
+        data = self.state_on_start_of_search
+        if not data: return
+        self.restore(data)
+        self.restoreAllExpansionStates(data[-1], redraw=True)
+        
     #@+node:ekr.20131117164142.16939: *3* LeoFind.ISearch
     #@+node:ekr.20131117164142.16941: *4* find.isearchForward
     @cmd('isearch-forward')
@@ -667,7 +701,7 @@ class LeoFind(object):
         trace = False and not g.unitTesting
         # c = self.c
         k = self.k
-        stroke = event and event.stroke or None
+        stroke = event.stroke if event else None
         s = stroke.s if stroke else ''
         if trace: g.trace('again', stroke in self.iSearchStrokes, 's', repr(s))
         # No need to recognize ctrl-z.
@@ -780,7 +814,7 @@ class LeoFind(object):
     @cmd('cfa')
     def minibufferCloneFindAll(self, event=None, preloaded=None):
         '''
-        clone-find-all, aka find-clone-all and cfa.
+        clone-find-all ( aka find-clone-all and cfa).
 
         Create an organizer node whose descendants contain clones of all nodes
         matching the search string, except @nosearch trees.
@@ -788,28 +822,28 @@ class LeoFind(object):
         The list is *not* flattened: clones appear only once in the
         descendants of the organizer node.
         '''
-        c = self.c; k = self.k; tag = 'clone-find-all'
-        state = k.getState(tag)
-        if state == 0:
-            w = self.editWidget(event) # sets self.w
-            if w:
-                if not preloaded:
-                    self.preloadFindPattern(w)
-                self.stateZeroHelper(event, tag, 'Clone Find All: ',
-                    self.minibufferCloneFindAll)
-        else:
-            k.clearState()
-            k.resetLabel()
-            k.showStateAndMode()
-            self.generalSearchHelper(k.arg, cloneFindAll=True)
-            c.treeWantsFocus()
+        w = self.editWidget(event) # sets self.w
+        if w:
+            if not preloaded:
+                self.preloadFindPattern(w)
+            self.stateZeroHelper(event,
+                prefix='Clone Find All: ',
+                handler=self.minibufferCloneFindAll1)
+
+    def minibufferCloneFindAll1(self, event):
+        c, k = self.c, self.k
+        k.clearState()
+        k.resetLabel()
+        k.showStateAndMode()
+        self.generalSearchHelper(k.arg, cloneFindAll=True)
+        c.treeWantsFocus()
     #@+node:ekr.20131117164142.16996: *4* find.minibufferCloneFindAllFlattened
     @cmd('clone-find-all-flattened')
     @cmd('find-clone-all-flattened')
     @cmd('cff')
     def minibufferCloneFindAllFlattened(self, event=None, preloaded=None):
         '''
-        clone-find-all-flattened, aka find-clone-all-flattened, cff.
+        clone-find-all-flattened (aka find-clone-all-flattened and cff).
 
         Create an organizer node whose direct children are clones of all nodes
         matching the search string, except @nosearch trees.
@@ -818,21 +852,49 @@ class LeoFind(object):
         of the organizer node, even if the clone also is a descendant of
         another cloned node.
         '''
-        c = self.c; k = self.k; tag = 'clone-find-all-flattened'
-        state = k.getState(tag)
-        if state == 0:
-            w = self.editWidget(event) # sets self.w
-            if w:
-                if not preloaded:
-                    self.preloadFindPattern(w)
-                self.stateZeroHelper(event, tag, 'Clone Find All Flattened: ',
-                    self.minibufferCloneFindAllFlattened)
-        else:
-            k.clearState()
-            k.resetLabel()
-            k.showStateAndMode()
-            self.generalSearchHelper(k.arg, cloneFindAllFlattened=True)
-            c.treeWantsFocus()
+        w = self.editWidget(event) # sets self.w
+        if w:
+            if not preloaded:
+                self.preloadFindPattern(w)
+            self.stateZeroHelper(event,
+                prefix='Clone Find All Flattened: ',
+                handler=self.minibufferCloneFindAllFlattened1)
+
+    def minibufferCloneFindAllFlattened1(self, event):
+        c = self.c; k = self.k
+        k.clearState()
+        k.resetLabel()
+        k.showStateAndMode()
+        self.generalSearchHelper(k.arg, cloneFindAllFlattened=True)
+        c.treeWantsFocus()
+    #@+node:ekr.20160920110324.1: *4* find.minibufferCloneFindTag
+    @cmd('clone-find-tag')
+    @cmd('find-clone-tag')
+    @cmd('cft')
+    def minibufferCloneFindTag(self, event=None):
+        '''
+        clone-find-tag (aka find-clone-tag and cft).
+
+        Create an organizer node whose descendants contain clones of all
+        nodes matching the given tag, except @nosearch trees.
+
+        The list is *always* flattened: every cloned node appears as a
+        direct child of the organizer node, even if the clone also is a
+        descendant of another cloned node.
+        '''
+        if self.editWidget(event): # sets self.w
+            self.stateZeroHelper(event,
+                prefix='Clone Find Tag: ',
+                handler=self.minibufferCloneFindTag1)
+
+    def minibufferCloneFindTag1(self, event):
+        c, k = self.c, self.k
+        k.clearState()
+        k.resetLabel()
+        k.showStateAndMode()
+        self.find_text = k.arg
+        self.cloneFindTag(k.arg)
+        c.treeWantsFocus()
     #@+node:ekr.20131117164142.16998: *4* find.minibufferFindAll
     @cmd('find-all')
     def minibufferFindAll(self, event=None):
@@ -842,12 +904,51 @@ class LeoFind(object):
         '''
         self.ftm.clear_focus()
         self.searchWithPresentOptions(event, findAllFlag=True)
+    #@+node:ekr.20171226140643.1: *4* find.minibufferFindAllUnique
+    @cmd('find-all-unique-regex')
+    def minibufferFindAllUniqueRegex(self, event=None):
+        '''
+        Create a summary node containing all unique matches of the regex search
+        string. This command shows only the matched string itself.
+        '''
+        self.ftm.clear_focus()
+        self.match_obj = None
+        self.unique_matches = set()
+        self.searchWithPresentOptions(event, findAllFlag=True, findAllUniqueFlag=True)
     #@+node:ekr.20131117164142.16994: *4* find.minibufferReplaceAll
     @cmd('replace-all')
     def minibufferReplaceAll(self, event=None):
         '''Replace all instances of the search string with the replacement string.'''
         self.ftm.clear_focus()
         self.searchWithPresentOptions(event, changeAllFlag=True)
+    #@+node:ekr.20160920164418.2: *4* find.minibufferTagChildren & helper
+    @cmd('tag-children')
+    def minibufferTagChildren(self, event=None):
+        '''tag-children: prompt for a tag and add it to all children of c.p.'''
+        if self.editWidget(event): # sets self.w
+            self.stateZeroHelper(event,
+                prefix='Tag Children: ',
+                handler=self.minibufferTagChildren1)
+
+    def minibufferTagChildren1(self, event):
+        c, k = self.c, self.k
+        k.clearState()
+        k.resetLabel()
+        k.showStateAndMode()
+        self.tagChildren(k.arg)
+        c.treeWantsFocus()
+    #@+node:ekr.20160920164418.4: *5* find.tagChildren
+    def tagChildren(self, tag):
+        '''Handle the clone-find-tag command.'''
+        c = self.c
+        tc = c.theTagController
+        if tc:
+            for p in c.p.children():
+                tc.add_tag(p,tag)
+            g.es_print('Added %s tag to %s nodes' % (
+                tag, len(list(c.p.children()))))
+        else:
+            g.es_print('nodetags not active')
     #@+node:ekr.20131117164142.16983: *3* LeoFind.Minibuffer utils
     #@+node:ekr.20131117164142.16992: *4* find.addChangeStringToLabel
     def addChangeStringToLabel(self):
@@ -901,7 +1002,7 @@ class LeoFind(object):
     def generalSearchHelper(self, pattern,
         cloneFindAll=False,
         cloneFindAllFlattened=False,
-        findAll=False
+        findAll=False,
     ):
         c = self.c
         self.setupSearchPattern(pattern)
@@ -929,33 +1030,23 @@ class LeoFind(object):
     #@+node:ekr.20131117164142.17003: *4* find.reSearchBackward/Forward
     @cmd('re-search-backward')
     def reSearchBackward(self, event):
-        k = self.k; tag = 're-search-backward'; state = k.getState(tag)
-        if state == 0:
-            self.setupArgs(forward=False, regexp=True, word=None)
-            self.stateZeroHelper(
-                event, tag, 'Regexp Search Backward:', self.reSearchBackward,
-                escapes=['\t']) # The Tab Easter Egg.
-        elif k.getArgEscapeFlag:
-            # Switch to the replace command.
-            k.setState('replace-string', 1, self.setReplaceString)
-            self.setReplaceString(event=None)
-        else:
-            self.updateFindList(k.arg)
-            self.lastStateHelper()
-            self.generalSearchHelper(k.arg)
+        self.setupArgs(forward=False, regexp=True, word=None)
+        self.stateZeroHelper(event,
+            'Regexp Search Backward:', self.reSearch1,
+            escapes=['\t']) # The Tab Easter Egg.
 
     @cmd('re-search-forward')
     def reSearchForward(self, event):
-        k = self.k; tag = 're-search-forward'; state = k.getState(tag)
-        if state == 0:
-            self.setupArgs(forward=True, regexp=True, word=None)
-            self.stateZeroHelper(
-                event, tag, 'Regexp Search:', self.reSearchForward,
-                escapes=['\t']) # The Tab Easter Egg.
-        elif k.getArgEscapeFlag:
-            # Switch to the replace command.
-            k.setState('replace-string', 1, self.setReplaceString)
-            self.setReplaceString(event=None)
+        self.setupArgs(forward=True, regexp=True, word=None)
+        self.stateZeroHelper(event,
+            prefix='Regexp Search:',
+            handler=self.reSearch1,
+            escapes=['\t']) # The Tab Easter Egg.
+
+    def reSearch1(self, event):
+        k = self.k
+        if k.getArgEscapeFlag:
+            self.setReplaceString1(event=None)
         else:
             self.updateFindList(k.arg)
             self.lastStateHelper()
@@ -963,33 +1054,25 @@ class LeoFind(object):
     #@+node:ekr.20131117164142.17004: *4* find.seachForward/Backward
     @cmd('search-backward')
     def searchBackward(self, event):
-        k = self.k; tag = 'search-backward'; state = k.getState(tag)
-        if state == 0:
-            self.setupArgs(forward=False, regexp=False, word=False)
-            self.stateZeroHelper(
-                event, tag, 'Search Backward: ', self.searchBackward,
-                escapes=['\t']) # The Tab Easter Egg.
-        elif k.getArgEscapeFlag:
-            # Switch to the replace command.
-            k.setState('replace-string', 1, self.setReplaceString)
-            self.setReplaceString(event=None)
-        else:
-            self.updateFindList(k.arg)
-            self.lastStateHelper()
-            self.generalSearchHelper(k.arg)
+        self.setupArgs(forward=False, regexp=False, word=False)
+        self.stateZeroHelper(event,
+            prefix='Search Backward: ',
+            handler=self.search1,
+            escapes=['\t']) # The Tab Easter Egg.
 
     @cmd('search-forward')
     def searchForward(self, event):
-        k = self.k; tag = 'search-forward'; state = k.getState(tag)
-        if state == 0:
-            self.setupArgs(forward=True, regexp=False, word=False)
-            self.stateZeroHelper(
-                event, tag, 'Search: ', self.searchForward,
-                escapes=['\t']) # The Tab Easter Egg.
-        elif k.getArgEscapeFlag:
+        self.setupArgs(forward=True, regexp=False, word=False)
+        self.stateZeroHelper(event,
+            prefix='Search: ',
+            handler=self.search1,
+            escapes=['\t']) # The Tab Easter Egg.
+
+    def search1(self, event):
+        k = self.k
+        if k.getArgEscapeFlag:
             # Switch to the replace command.
-            k.setState('replace-string', 1, self.setReplaceString)
-            self.setReplaceString(event=None)
+            self.setReplaceString1(event=None)
         else:
             self.updateFindList(k.arg)
             self.lastStateHelper()
@@ -998,45 +1081,55 @@ class LeoFind(object):
     @cmd('set-replace-string')
     def setReplaceString(self, event):
         '''A state handler to get the replacement string.'''
-        trace = False and not g.unitTesting
-        k = self.k; tag = 'replace-string'; state = k.getState(tag)
-        prompt = 'Replace ' + 'Regex' if self.pattern_match else 'String'
-        if trace: g.trace(state)
-        if state == 0:
-            # self.setupArgs(forward=None,regexp=None,word=None)
-            prefix = '%s: ' % prompt
-            self.stateZeroHelper(event, tag, prefix, self.setReplaceString)
-        elif state == 1:
-            self._sString = k.arg
-            self.updateFindList(k.arg)
-            s = '%s: %s With: ' % (prompt, self._sString)
-            k.setLabelBlue(s)
-            self.addChangeStringToLabel()
-            k.getArg(event, 'replace-string', 2, self.setReplaceString, completion=False)
-        elif state == 2:
-            self.updateChangeList(k.arg)
-            self.lastStateHelper()
-            self.generalChangeHelper(self._sString, k.arg, changeAll=self.changeAllFlag)
+        prompt = 'Replace ' + ('Regex' if self.pattern_match else 'String')
+        prefix = '%s: ' % prompt
+        self.stateZeroHelper(event,
+            prefix=prefix,
+            handler=self.setReplaceString1)
+
+    def setReplaceString1(self, event):
+        k = self.k
+        prompt = 'Replace ' + ('Regex' if self.pattern_match else 'String')
+        self._sString = k.arg
+        self.updateFindList(k.arg)
+        s = '%s: %s With: ' % (prompt, self._sString)
+        k.setLabelBlue(s)
+        self.addChangeStringToLabel()
+        k.getNextArg(self.setReplaceString2)
+
+    def setReplaceString2(self, event):
+        k = self.k
+        self.updateChangeList(k.arg)
+        self.lastStateHelper()
+        self.generalChangeHelper(self._sString, k.arg, changeAll=self.changeAllFlag)
     #@+node:ekr.20131117164142.17005: *4* find.searchWithPresentOptions & helpers
     @cmd('set-search-string')
-    def searchWithPresentOptions(self, event, findAllFlag=False, changeAllFlag=False):
+    def searchWithPresentOptions(self, event,
+    findAllFlag=False,
+    findAllUniqueFlag=False,
+    changeAllFlag=False,
+    ):
         '''Open the search pane and get the search string.'''
         trace = False and not g.unitTesting
-        c, k, tag = self.c, self.k, 'search-with-present-options'
-        state = k.getState(tag)
-        if trace: g.trace('state', state, k.getArgEscapeFlag)
-        if state == 0:
-            # Remember the entry focus, just as when using the find pane.
-            self.changeAllFlag = changeAllFlag
-            self.findAllFlag = findAllFlag
-            self.ftm.set_entry_focus()
-            escapes = ['\t']
-            escapes.extend(self.findEscapes())
-            self.stateZeroHelper(
-                event, tag, 'Search: ', self.searchWithPresentOptions,
-                escapes=escapes) # The Tab Easter Egg.
-        elif k.getArgEscapeFlag:
-             # 2015/06/30: Special cases for F2/F3 to the escapes
+        if trace: g.trace('=====')
+        # Remember the entry focus, just as when using the find pane.
+        self.changeAllFlag = changeAllFlag
+        self.findAllFlag = findAllFlag
+        self.findAllUniqueFlag = findAllUniqueFlag
+        self.ftm.set_entry_focus()
+        escapes = ['\t']
+        escapes.extend(self.findEscapes())
+        self.stateZeroHelper(event,
+            'Search: ', self.searchWithPresentOptions1,
+            escapes=escapes) # The Tab Easter Egg.
+
+    def searchWithPresentOptions1(self, event):
+        trace = False and not g.unitTesting
+        if trace: g.trace('=====')
+        c, k = self.c, self.k
+        # g.trace(k.getArgEscapeFlag, repr(k.arg), g.callers())
+        if k.getArgEscapeFlag:
+            # 2015/06/30: Special cases for F2/F3 to the escapes
             if event.stroke in self.findEscapes():
                 command = self.escapeCommand(event)
                 func = c.commandsDict.get(command)
@@ -1044,17 +1137,18 @@ class LeoFind(object):
                 k.resetLabel()
                 k.showStateAndMode()
                 if func:
+                    if trace: g.trace('calling:', func)
                     func(event)
                 else:
                     return g.trace('unknown command', command)
             else:
                 # Switch to the replace command.
                 if self.findAllFlag: self.changeAllFlag = True
-                self.setupSearchPattern(k.arg) # 2010/01/10: update the find text immediately.
-                k.setState('replace-string', 1, self.setReplaceString)
-                if trace: g.trace(k.getState('replace-string'))
-                self.setReplaceString(event=None)
+                k.getArgEscapeFlag = False
+                self.setupSearchPattern(k.arg)
+                self.setReplaceString1(event=None)
         else:
+            if trace: g.trace('k.arg', repr(k.arg))
             self.updateFindList(k.arg)
             k.clearState()
             k.resetLabel()
@@ -1086,7 +1180,9 @@ class LeoFind(object):
                 return si.commandName
         return None
     #@+node:ekr.20131117164142.17007: *4* find.stateZeroHelper
-    def stateZeroHelper(self, event, tag, prefix, handler, escapes=None):
+    def stateZeroHelper(self, event, prefix, handler, escapes=None):
+        trace = False and not g.unitTesting
+        if trace: g.trace('handler', handler)
         c, k = self.c, self.k
         self.w = self.editWidget(event)
         if not self.w:
@@ -1105,8 +1201,7 @@ class LeoFind(object):
         if escapes is None: escapes = []
         k.getArgEscapes = escapes
         k.getArgEscapeFlag = False # k.getArg may set this.
-        k.getArg(event, tag, 1, handler, # enter state 1
-            tabList=self.findTextList, completion=True)
+        k.get1Arg(event, handler=handler, tabList=self.findTextList, completion=True)
     #@+node:ekr.20131117164142.17008: *4* find.updateChange/FindList
     def updateChangeList(self, s):
         if s not in self.changeTextList:
@@ -1115,28 +1210,27 @@ class LeoFind(object):
     def updateFindList(self, s):
         if s not in self.findTextList:
             self.findTextList.append(s)
-    #@+node:ekr.20131117164142.17009: *4* find.wordSearchBackward/Forward
+    #@+node:ekr.20131117164142.17009: *4* find.wordSearchBackward/Forward (test)
     @cmd('word-search-backward')
     def wordSearchBackward(self, event):
-        k = self.k; tag = 'word-search-backward'; state = k.getState(tag)
-        if state == 0:
-            self.setupArgs(forward=False, regexp=False, word=True)
-            self.stateZeroHelper(event, tag, 'Word Search Backward: ', self.wordSearchBackward)
-        else:
-            self.lastStateHelper()
-            self.generalSearchHelper(k.arg)
+        self.setupArgs(forward=False, regexp=False, word=True)
+        self.stateZeroHelper(event,
+            prefix='Word Search Backward: ',
+            handler=self.wordSearch1)
 
     @cmd('word-search-forward')
     def wordSearchForward(self, event):
-        k = self.k; tag = 'word-search-forward'; state = k.getState(tag)
-        if state == 0:
-            self.setupArgs(forward=True, regexp=False, word=True)
-            self.stateZeroHelper(event, tag, 'Word Search: ', self.wordSearchForward)
-        else:
-            self.lastStateHelper()
-            self.generalSearchHelper(k.arg)
+        self.setupArgs(forward=True, regexp=False, word=True)
+        self.stateZeroHelper(event,
+            prefix='Word Search: ',
+            handler=self.wordSearch1)
+
+    def wordSearch1(self, event):
+        k = self.k
+        self.lastStateHelper()
+        self.generalSearchHelper(k.arg)
     #@+node:ekr.20131117164142.16915: *3* LeoFind.Option commands
-    #@+node:ekr.20131117164142.16919: *4* LeoFind.toggle checkbox commands
+    #@+node:ekr.20131117164142.16919: *4* LeoFind.toggle-find-*-option commands
     @cmd('toggle-find-collapses-nodes')
     def toggleFindCollapesNodes(self, event):
         '''Toggle the 'Collapse Nodes' checkbox in the find tab.'''
@@ -1186,8 +1280,11 @@ class LeoFind(object):
         return self.toggleOption('wrap')
 
     def toggleOption(self, checkbox_name):
+        c, fc = self.c, self.c.findCommands
         self.ftm.toggle_checkbox(checkbox_name)
-    #@+node:ekr.20131117164142.17019: *4* LeoFind.setFindScope...
+        options = fc.computeFindOptionsInStatusArea()
+        c.frame.statusLine.put(options)
+    #@+node:ekr.20131117164142.17019: *4* LeoFind.set-find-* commands
     @cmd('set-find-everywhere')
     def setFindScopeEveryWhere(self, event=None):
         '''Set the 'Entire Outline' radio button in the Find tab.'''
@@ -1205,15 +1302,26 @@ class LeoFind(object):
 
     def setFindScope(self, where):
         '''Set the radio buttons to the given scope'''
+        c, fc = self.c, self.c.findCommands
         self.ftm.set_radio_button(where)
-    #@+node:ekr.20131117164142.16989: *4* LeoFind.showFindOptions
+        options = fc.computeFindOptionsInStatusArea()
+        c.frame.statusLine.put(options)
+    #@+node:ekr.20131117164142.16989: *4* LeoFind.showFindOptions & helper
     @cmd('show-find-options')
     def showFindOptions(self, event=None):
         '''
         Show the present find options in the status line.
         This is useful for commands like search-forward that do not show the Find Panel.
         '''
-        frame = self.c.frame; z = []
+        frame = self.c.frame
+        frame.clearStatusLine()
+        part1, part2 = self.computeFindOptions()
+        frame.putStatusLine(part1, bg='blue')
+        frame.putStatusLine(part2)
+    #@+node:ekr.20171129205648.1: *5* LeoFind.computeFindOptions
+    def computeFindOptions(self):
+        '''Return the status line as two strings.'''
+        z = []
         # Set the scope field.
         head = self.search_headline
         body = self.search_body
@@ -1229,9 +1337,7 @@ class LeoFind(object):
         head = 'head' if head else ''
         body = 'body' if body else ''
         sep = '+' if head and body else ''
-        frame.clearStatusLine()
-        s = '%s%s%s %s  ' % (head, sep, body, scope)
-        frame.putStatusLine(s, bg='blue')
+        part1 = '%s%s%s %s  ' % (head, sep, body, scope)
         # Set the type field.
         regex = self.pattern_match
         if regex: z.append('regex')
@@ -1246,7 +1352,9 @@ class LeoFind(object):
         for ivar, s in table:
             val = getattr(self, ivar)
             if val: z.append(s)
-        frame.putStatusLine(' '.join(z))
+        part2 = ' '.join(z)
+        return part1, part2
+
     #@+node:ekr.20131117164142.16990: *4* LeoFind.setupChangePattern
     def setupChangePattern(self, pattern):
         self.ftm.setChangeText(pattern)
@@ -1254,60 +1362,57 @@ class LeoFind(object):
     def setupSearchPattern(self, pattern):
         self.ftm.setFindText(pattern)
     #@+node:ekr.20031218072017.3067: *3* LeoFind.Utils
-    #@+node:ekr.20031218072017.2293: *4* find.batchChange (sets start of replace-all group)
-    #@+at This routine performs a single batch change operation, updating the
-    # head or body string of p and leaving the result in s_ctrl. We update
-    # the body if we are changing the body text of c.currentVnode().
-    # 
-    # s_ctrl contains the found text on entry and contains the changed text
-    # on exit. pos and pos2 indicate the selection. The selection will never
-    # be empty. NB: we can not assume that self.p is visible.
-    #@@c
-
+    #@+node:ekr.20031218072017.2293: *4* find.batchChange
     def batchChange(self, pos1, pos2):
-        c = self.c; u = c.undoer
-        p = self.p or c.p # 2015/06/22
+        '''
+        Do a single batch change operation, updating the head or body string of
+        p and leaving the result in s_ctrl.
+
+        s_ctrl contains the found text on entry and contains the changed text
+        on exit. pos and pos2 indicate the selection. The selection will never
+        be empty.
+        '''
+        c, u = self.c, self.c.undoer
+        p = self.p
+        if not p:
+            g.trace('===== can not happen: no p.')
+            return
         w = self.s_ctrl
         # Replace the selection with self.change_text
-        if pos1 > pos2: pos1, pos2 = pos2, pos1
+        if pos1 > pos2:
+            pos1, pos2 = pos2, pos1
         s = w.getAllText()
-        if pos1 != pos2: w.delete(pos1, pos2)
+        if pos1 != pos2:
+            w.delete(pos1, pos2)
         w.insert(pos1, self.change_text)
         # Update the selection.
         insert = pos1 if self.reverse else pos1 + len(self.change_text)
         w.setSelectionRange(insert, insert)
         w.setInsertPoint(insert)
         # Update the node
-        s = w.getAllText() # Used below.
-        if self.in_headline:
-            #@+<< change headline >>
-            #@+node:ekr.20031218072017.2294: *5* << change headline >>
-            if len(s) > 0 and s[-1] == '\n':
-                s = s[: -1]
-            if s != p.h:
-                undoData = u.beforeChangeNodeContents(p)
+        s = w.getAllText()
+        if s and s[-1] == '\n': s = s[: -1]
+        changed = s != p.h if self.in_headline else s != p.b
+        if changed:
+            undoData = u.beforeChangeNodeContents(p)
+            if self.in_headline:
                 p.initHeadString(s)
-                if self.mark_changes:
-                    p.setMarked()
-                p.setDirty()
-                if not c.isChanged():
-                    c.setChanged(True)
-                u.afterChangeNodeContents(p, 'Change Headline', undoData)
-            #@-<< change headline >>
-        else:
-            #@+<< change body >>
-            #@+node:ekr.20031218072017.2295: *5* << change body >>
-            if len(s) > 0 and s[-1] == '\n': s = s[: -1]
-            if s != p.b:
-                undoData = u.beforeChangeNodeContents(p)
-                c.setBodyString(p, s)
-                if self.mark_changes:
-                    p.setMarked()
-                p.setDirty()
-                if not c.isChanged():
-                    c.setChanged(True)
-                u.afterChangeNodeContents(p, 'Change Body', undoData)
-            #@-<< change body >>
+            else:
+                # Fix #456: replace-all is very slow.
+                # p.b calls c.setBodyString, which is *very* slow.
+                p.v.setBodyString(s)
+            if self.mark_changes:
+                p.setMarked() # Just calls v.setMarked.
+            # Fix #456: replace-all is very slow.
+            # p.setDirty if very slow.
+            p.v.setDirty()
+            if not c.isChanged():
+                c.setChanged(True)
+            u.afterChangeNodeContents(
+                p,
+                'Change Headline' if self.in_headline else 'Change Body',
+                undoData,
+            )
     #@+node:ekr.20031218072017.3068: *4* find.change
     @cmd('replace')
     def change(self, event=None):
@@ -1321,6 +1426,7 @@ class LeoFind(object):
         trace = False and not g.unitTesting
         c = self.c; u = c.undoer; undoType = 'Replace All'
         current = c.p
+        t1 = time.clock()
         if not self.checkArgs():
             if trace: g.trace('checkArgs failed')
             return
@@ -1342,7 +1448,10 @@ class LeoFind(object):
             self.batchChange(pos1, pos2)
         p = c.p
         u.afterChangeGroup(p, undoType, reportFlag=True)
-        g.es("changed:", count, "instances of", self.find_text, "to", self.change_text)
+        t2 = time.clock()
+        g.es('changed %s instances in %4.2f sec.' % (count, (t2-t1)))
+            # self.find_text, self.change_text,
+        c.recolor()
         c.redraw(p)
         self.restore(saveData)
     #@+node:ekr.20031218072017.3070: *4* find.changeSelection
@@ -1422,6 +1531,47 @@ class LeoFind(object):
         self.initInHeadline()
         if self.changeSelection():
             self.findNext(False) # don't reinitialize
+    #@+node:ekr.20160920114454.1: *4* find.cloneFindTag & helpers
+    def cloneFindTag(self, tag):
+        '''Handle the clone-find-tag command.'''
+        c, u = self.c, self.c.undoer
+        tc = c.theTagController
+        if not tc:
+            g.es_print('nodetags not active')
+            return
+        clones = tc.get_tagged_nodes(tag)
+        if clones:
+            undoType = 'Clone Find Tag'
+            undoData = u.beforeInsertNode(c.p)
+            found = self.createCloneTagNodes(clones)
+            u.afterInsertNode(found, undoType, undoData, dirtyVnodeList=[])
+            assert c.positionExists(found, trace=True), found
+            c.setChanged(True)
+            c.selectPosition(found)
+            c.redraw()
+        else:
+            g.es_print('tag not found: %s' % self.find_text)
+        return len(clones)
+    #@+node:ekr.20160920112617.2: *5* find.createCloneTagNodes
+    def createCloneTagNodes(self, clones):
+        '''
+        Create a "Found Tag" node as the last node of the outline.
+        Clone all positions in the clones set as children of found.
+        '''
+        c, p = self.c, self.c.p
+        # Create the found node.
+        assert c.positionExists(c.lastTopLevel()), c.lastTopLevel()
+        found = c.lastTopLevel().insertAfter()
+        assert found
+        assert c.positionExists(found), found
+        found.h = 'Found Tag: %s' % self.find_text
+        # Clone nodes as children of the found node.
+        for p in clones:
+            # Create the clone directly as a child of found.
+            p2 = p.copy()
+            n = found.numberOfChildren()
+            p2._linkAsNthChild(found, n, adjust=False)
+        return found
     #@+node:ekr.20031218072017.3073: *4* find.findAll & helpers
     def findAll(self, clone_find_all=False, clone_find_all_flattened=False):
         trace = False and not g.unitTesting
@@ -1442,7 +1592,7 @@ class LeoFind(object):
         if trace: g.trace(self.find_text)
         # Init suboutline-only for clone-find-all commands
         # Much simpler: does not set self.p or any other state.
-        if self.pattern_match:
+        if self.pattern_match or self.findAllUniqueFlag:
             ok = self.precompilePattern()
             if not ok: return
         if self.suboutline_only:
@@ -1452,20 +1602,28 @@ class LeoFind(object):
             # Always search the entire outline.
             p = c.rootPosition()
             after = None
-        if clone_find:
-            count = self.doCloneFindAll(after, data, flatten, p, undoType)
-        else:
-            self.p = p
-            count = self.doFindAll(after, data, p, undoType)
-        c.contractAllHeadlines()
-        # c.redraw()
+        # Fix #292: Never collapse nodes during find-all commands.
+        old_sparse_find = c.sparse_find
+        try:
+            c.sparse_find = False
+            if clone_find:
+                count = self.doCloneFindAll(after, data, flatten, p, undoType)
+            else:
+                self.p = p
+                count = self.doFindAll(after, data, p, undoType)
+            # c.contractAllHeadlines()
+        finally:
+            c.sparse_find = old_sparse_find
+        if count:
+            c.redraw()
         g.es("found", count, "matches for", self.find_text)
     #@+node:ekr.20160422072841.1: *5* find.doCloneFindAll & helpers
     def doCloneFindAll(self, after, data, flatten, p, undoType):
         '''Handle the clone-find-all command, from p to after.'''
         c, u = self.c, self.c.undoer
         count, found = 0, None
-        clones, skip = set(), set()
+        # 535: positions are not hashable, but vnodes are.
+        clones, skip = [], set()
         while p and p != after:
             progress = p.copy()
             if p.v in skip:
@@ -1499,13 +1657,15 @@ class LeoFind(object):
         status = self.getFindResultStatus(find_all=True)
         status = status.strip().lstrip('(').rstrip(')').strip()
         flat = 'flattened, ' if flattened else ''
-        found.b = '# ' + flat + status
+        found.b = '# %s%s\n\n# found %s nodes' % (flat, status, len(clones))
         # Clone nodes as children of the found node.
         for p in clones:
             # Create the clone directly as a child of found.
             p2 = p.copy()
             n = found.numberOfChildren()
             p2._linkAsNthChild(found, n, adjust=False)
+        # Sort the clones in place, without undo.
+        found.v.children.sort(key=lambda v: v.h.lower())
         return found
     #@+node:ekr.20160422071747.1: *6* find.doCloneFindAllHelper
     def doCloneFindAllHelper(self, clones, count, flatten, p, skip):
@@ -1520,7 +1680,8 @@ class LeoFind(object):
         found = self.findNextBatchMatch(p)
         if found:
             if trace and verbose: g.trace('found', p.h)
-            clones.add(p.copy())
+            if not p in clones:
+                clones.append(p.copy())
             count += 1
         if flatten:
             skip.add(p.v)
@@ -1547,7 +1708,11 @@ class LeoFind(object):
             s = w.getAllText()
             i, j = g.getLine(s, pos)
             line = s[i: j]
-            if both:
+            if self.findAllUniqueFlag:
+                m = self.match_obj
+                if m:
+                    self.unique_matches.add(m.group(0).strip())
+            elif both:
                 result.append('%s%s\n%s%s\n' % (
                     '-' * 20, self.p.h,
                     "head: " if self.in_headline else "body: ",
@@ -1557,9 +1722,13 @@ class LeoFind(object):
             else:
                 result.append('%s%s\n%s' % ('-' * 20, self.p.h, line.rstrip()+'\n'))
                 self.p.setVisited()
-        if result:
+        if result or self.unique_matches:
             undoData = u.beforeInsertNode(c.p)
-            found = self.createFindAllNode(result)
+            if self.findAllUniqueFlag:
+                found = self.createFindUniqueNode()
+                count = len(list(self.unique_matches))
+            else:
+                found = self.createFindAllNode(result)
             u.afterInsertNode(found, undoType, undoData, dirtyVnodeList=[])
             c.selectPosition(found)
             c.setChanged(True)
@@ -1576,6 +1745,19 @@ class LeoFind(object):
         status = self.getFindResultStatus(find_all=True)
         status = status.strip().lstrip('(').rstrip(')').strip()
         found.b = '# %s\n%s' % (status, ''.join(result))
+        return found
+    #@+node:ekr.20171226143621.1: *6* find.createFindUniqueNode
+    def createFindUniqueNode(self):
+        '''Create a "Found Unique" node as the last node of the outline.'''
+        c = self.c
+        found = c.lastTopLevel().insertAfter()
+        assert found
+        found.h = 'Found Unique Regex:%s' % self.find_text
+        # status = self.getFindResultStatus(find_all=True)
+        # status = status.strip().lstrip('(').rstrip(')').strip()
+        # found.b = '# %s\n%s' % (status, ''.join(result))
+        result = sorted(self.unique_matches)
+        found.b = '\n'.join(result)
         return found
     #@+node:ekr.20160224141710.1: *6* find.findNextBatchMatch
     def findNextBatchMatch(self, p):
@@ -1646,10 +1828,12 @@ class LeoFind(object):
         '''Resume the search where it left off.'''
         trace = False and not g.unitTesting
         verbose = False
+        if trace: t1 = time.clock()
         c, p = self.c, self.p
         if trace:
             g.trace('***** entry: search_headline: %s search_body: %s %s' % (
                 self.search_headline, self.search_body, p.h))
+            g.trace('pattern_match', self.pattern_match)
             if verbose:
                 print('parents...')
                 for parent in p.parents():
@@ -1657,12 +1841,12 @@ class LeoFind(object):
         if not self.search_headline and not self.search_body:
             if trace: g.trace('nothing to search')
             return None, None
-        if len(self.find_text) == 0:
+        if not self.find_text:
             if trace: g.trace('no find text')
             return None, None
         self.errors = 0
         attempts = 0
-        if self.pattern_match:
+        if self.pattern_match or self.findAllUniqueFlag:
             ok = self.precompilePattern()
             if not ok: return None, None
         while p:
@@ -1676,8 +1860,11 @@ class LeoFind(object):
                 # Success.
                 if self.mark_finds:
                     p.setMarked()
-                    c.frame.tree.drawIcon(p) # redraw only the icon.
-                if trace: g.trace('success', pos, newpos, p.h)
+                    if not self.changeAllFlag:
+                        c.frame.tree.drawIcon(p) # redraw only the icon.
+                if trace:
+                    t2 = time.clock()
+                    g.trace('success', '%5.2f' % (t2-t1), pos, newpos, p.h)
                 return pos, newpos
             # Searching the pane failed: switch to another pane or node.
             if self.shouldStayInNode(p):
@@ -1813,6 +2000,7 @@ class LeoFind(object):
         '''Precompile the regexp pattern if necessary.'''
         trace = False and not g.unitTesting
         try: # Precompile the regexp.
+            # pylint: disable=no-member
             flags = re.MULTILINE
             if self.ignore_case: flags |= re.IGNORECASE
             # Escape the search text.
@@ -1855,8 +2043,7 @@ class LeoFind(object):
         trace_fail = False
         c = self.c
         p = self.p or c.p
-        ignore_dups = c.config.getBool('find-ignore-duplicates', default=False)
-        if (ignore_dups or self.find_def_data) and p.v in self.find_seen:
+        if (self.ignore_dups or self.find_def_data) and p.v in self.find_seen:
             # Don't find defs/vars multiple times.
             return None, None
         w = self.s_ctrl
@@ -1903,7 +2090,7 @@ class LeoFind(object):
                 return None, None
         ins = min(pos, newpos) if self.reverse else max(pos, newpos)
         w.setSelectionRange(pos, newpos, insert=ins)
-        if (ignore_dups or self.find_def_data):
+        if (self.ignore_dups or self.find_def_data):
             self.find_seen.add(p.v)
         if trace and (trace_fail or newpos != -1):
             g.trace('** returns', pos, newpos, self.find_seen)
@@ -1924,7 +2111,7 @@ class LeoFind(object):
         trace = False and not g.unitTesting
         backwards = self.reverse
         nocase = self.ignore_case
-        regexp = self.pattern_match
+        regexp = self.pattern_match or self.findAllUniqueFlag
         word = self.whole_word
         if backwards: i, j = j, i
         if trace: g.trace('entry', i, j, repr(s[min(i, j): max(i, j)]))
@@ -2064,8 +2251,8 @@ class LeoFind(object):
             return False
         pat1, pat2 = pattern[0], pattern[-1]
         n = len(pattern)
-        ch1 = 0 <= i - 1 < len(s) and s[i - 1] or '.'
-        ch2 = 0 <= i + n < len(s) and s[i + n] or '.'
+        ch1 = s[i - 1] if 0 <= i - 1 < len(s) else '.'
+        ch2 = s[i + n] if 0 <= i + n < len(s) else '.'
         isWordPat1 = g.isWordChar(pat1)
         isWordPat2 = g.isWordChar(pat2)
         isWordCh1 = g.isWordChar(ch1)
@@ -2094,9 +2281,25 @@ class LeoFind(object):
                     i += 1 # Skip the escaped character.
             i += 1
         return s
-    #@+node:ekr.20150615174549.1: *4* find.showFindOptionsInStatusArea
+    #@+node:ekr.20131117164142.17006: *4* find.setupArgs
+    def setupArgs(self, forward=False, regexp=False, word=False):
+        '''
+        Set up args for commands that force various values for commands
+        (re-/word-/search-backward/forward)
+        that force one or more of these values to be a spefic value.
+        '''
+        if forward in (True, False): self.reverse = not forward
+        if regexp in (True, False): self.pattern_match = regexp
+        if word in (True, False): self.whole_word = word
+        self.showFindOptions()
+    #@+node:ekr.20150615174549.1: *4* find.showFindOptionsInStatusArea & helper
     def showFindOptionsInStatusArea(self):
         '''Show find options in the status area.'''
+        c = self.c
+        s = self.computeFindOptionsInStatusArea()
+        c.frame.putStatusLine(s)
+    #@+node:ekr.20171129211238.1: *5* find.computeFindOptionsInStatusArea
+    def computeFindOptionsInStatusArea(self):
         c = self.c
         ftm = c.findCommands.ftm
         table = (
@@ -2118,7 +2321,7 @@ class LeoFind(object):
             if ivar.isChecked():
                 result.append('[%s]' % option)
                 break
-        c.frame.putStatusLine('Find: %s' % ' '.join(result))
+        return 'Find: %s' % ' '.join(result)
     #@+node:ekr.20150619070602.1: *4* find.showStatus
     def showStatus(self, found):
         '''Show the find status the Find dialog, if present, and the status line.'''
@@ -2139,17 +2342,9 @@ class LeoFind(object):
         fg = found_fg if found else not_found_fg
         if c.config.getBool("show-find-result-in-status") is not False:
             c.frame.putStatusLine(s, bg=bg, fg=fg)
-    #@+node:ekr.20131117164142.17006: *4* find.setupArgs
-    def setupArgs(self, forward=False, regexp=False, word=False):
-        '''
-        Set up args for commands that force various values for commands
-        (re-/word-/search-backward/forward)
-        that force one or more of these values to be a spefic value.
-        '''
-        if forward is not None: self.reverse = not forward
-        if regexp is not None: self.patern_match = True
-        if word is not None: self.whole_word = True
-        self.showFindOptions()
+        if not found: # Fixes: #457
+            self.radioButtonsChanged = True
+            self.reset_state_ivars()
     #@+node:ekr.20031218072017.3082: *3* LeoFind.Initing & finalizing
     #@+node:ekr.20031218072017.3083: *4* find.checkArgs
     def checkArgs(self):
@@ -2158,7 +2353,7 @@ class LeoFind(object):
             g.es("not searching headline or body")
             val = False
         s = self.ftm.getFindText()
-        if len(s) == 0:
+        if not s:
             g.es("empty find patttern")
             val = False
         return val
@@ -2229,7 +2424,7 @@ class LeoFind(object):
         ftm = self.ftm
         w = ftm.entry_focus or g.app.gui.get_focus(raw=True)
         ftm.entry_focus = None # Only use this focus widget once!
-        w_name = w and g.app.gui.widget_name(w) or ''
+        w_name = c.widget_name(w)
         if self.buttonFlag and self.was_in_headline in (True, False):
             # Fix bug: https://groups.google.com/d/msg/leo-editor/RAzVPihqmkI/-tgTQw0-LtwJ
             self.in_headline = self.was_in_headline
@@ -2306,7 +2501,7 @@ class LeoFind(object):
         '''Restore the screen and clear state after a search fails.'''
         trace = False and not g.unitTesting
         c = self.c
-        in_headline, editing, p, w, insert, start, end = data
+        in_headline, editing, p, w, insert, start, end, junk = data
         self.was_in_headline = False # 2015/03/25
         if trace: g.trace('was_in_headline', self.was_in_headline)
         if 0: # Don't do this here.
@@ -2334,6 +2529,18 @@ class LeoFind(object):
             w.setSelectionRange(start, end, insert=insert)
             w.seeInsertPoint()
             c.widgetWantsFocus(w)
+    #@+node:vitalije.20170712102153.1: *4* find.restoreAllExpansionStates
+    def restoreAllExpansionStates(self, expanded, redraw=False):
+        '''expanded is a set of gnx of nodes that should be expanded'''
+
+        c = self.c; gnxDict = c.fileCommands.gnxDict
+        for gnx, v in gnxDict.items():
+            if gnx in expanded:
+                v.expand()
+            else:
+                v.contract()
+        if redraw:
+            c.redraw()
     #@+node:ekr.20031218072017.3090: *4* find.save
     def save(self):
         '''Save everything needed to restore after a search fails.'''
@@ -2354,7 +2561,12 @@ class LeoFind(object):
             else:
                 start, end = None, None
         editing = e is not None
-        return self.in_headline, editing, p.copy(), w, insert, start, end
+        # g.trace('wrapping', self.wrapping, 'wrap', self.wrap)
+        expanded = set(gnx for gnx, v in c.fileCommands.gnxDict.items() if v.isExpanded())
+        # TODO: this is naive solution that treat all clones the same way if one is expanded
+        #       then every other clone is expanded too. A proper way would be to remember
+        #       each clone separately
+        return self.in_headline, editing, p.copy(), w, insert, start, end, expanded
     #@+node:ekr.20031218072017.3091: *4* find.showSuccess (headline hack)
     def showSuccess(self, pos, newpos, showState=True):
         '''Display the result of a successful find operation.'''
@@ -2399,6 +2611,9 @@ class LeoFind(object):
                 insert, w.getSelectionRange(), w.getYScrollPosition()))
             if c.vim_mode and c.vimCommands:
                 c.vimCommands.update_selection_after_search()
+        # Support for the console gui.
+        if hasattr(g.app.gui, 'show_find_success'):
+            g.app.gui.show_find_success(c, self.in_headline, insert, p)
         if c.config.getBool('close-find-dialog-after-search', default=True):
             if hasattr(g.app.gui, 'hideFindDialog'):
                 g.app.gui.hideFindDialog()
@@ -2420,6 +2635,7 @@ class LeoFind(object):
             s = s[: -1]
         if self.radioButtonsChanged or s != self.find_text:
             self.radioButtonsChanged = False
+            self.state_on_start_of_search = self.save()
             # Reset ivars related to suboutline-only and wrapped searches.
             self.reset_state_ivars()
         self.find_text = s

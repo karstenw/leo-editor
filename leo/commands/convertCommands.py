@@ -3,10 +3,14 @@
 #@+node:ekr.20160316095222.1: * @file ../commands/convertCommands.py
 #@@first
 '''Leo's file-conversion commands.'''
+#@+<< imports >>
+#@+node:ekr.20161023150723.1: ** << imports >>
 import leo.core.leoGlobals as g
+import leo.core.leoBeautify as leoBeautify
 from leo.commands.baseCommands import BaseEditCommandsClass as BaseEditCommandsClass
 # import re
 # import sys
+#@-<< imports >>
 
 def cmd(name):
     '''Command decorator for the ConvertCommandsClass class.'''
@@ -17,21 +21,20 @@ def cmd(name):
 class To_Python(object):
     '''The base class for x-to-python commands.'''
     #@+others
-    #@+node:ekr.20150514063305.124: *3* top.cmd (decorator
-    #@+node:ekr.20150514063305.125: *3* ctor (To_Python)
+    #@+node:ekr.20150514063305.125: *3* To_Python.ctor
     def __init__(self, c):
         '''Ctor for To_Python class.'''
         self.c = c
         self.p = self.c.p.copy()
         aList = g.get_directives_dict_list(self.p)
         self.tab_width = g.scanAtTabwidthDirectives(aList) or 4
-    #@+node:ekr.20150514063305.126: *3* go
+    #@+node:ekr.20150514063305.126: *3* To_Python.go
     def go(self):
         import time
         t1 = time.time()
         c = self.c
         u, undoType = c.undoer, 'typescript-to-python'
-        pp = c.CPrettyPrinter(c)
+        pp = leoBeautify.CPrettyPrinter(c)
         u.beforeChangeGroup(c.p, undoType)
         changed, dirtyVnodeList = False, []
         n_files, n_nodes = 0, 0
@@ -61,11 +64,11 @@ class To_Python(object):
                 reportFlag=False, dirtyVnodeList=dirtyVnodeList)
         t2 = time.time()
         g.es_print('done! %s files, %s nodes, %2.2f sec' % (n_files, n_nodes, t2 - t1))
-    #@+node:ekr.20150514063305.127: *3* convertCodeList (must be defined in subclasses)
+    #@+node:ekr.20150514063305.127: *3* To_Python.convertCodeList
     def convertCodeList(self, aList):
         '''The main search/replace method.'''
         g.trace('must be defined in subclasses.')
-    #@+node:ekr.20150514063305.128: *3* Utils
+    #@+node:ekr.20150514063305.128: *3* To_Python.Utils
     #@+node:ekr.20150514063305.129: *4* match...
     #@+node:ekr.20150514063305.130: *5* match
     def match(self, s, i, pat):
@@ -292,9 +295,8 @@ class To_Python(object):
         if n == 1:
             return ['%s# %s' % ((' ' * (w - 1)), s.strip())]
         junk, w = g.skip_leading_ws_with_indent(s, 0, tab_width=4)
-        i, result = 0, []
-        for i in range(len(comment_lines)):
-            s = comment_lines[i]
+        result = []
+        for i, s in enumerate(comment_lines):
             if s.strip():
                 result.append('%s# %s' % ((' ' * w), s.strip()))
             elif i == n - 1:
@@ -481,7 +483,7 @@ class ConvertCommandsClass(BaseEditCommandsClass):
             self.ivars = []
                 # List of ivars to be converted to self.ivar
             self.get_user_types()
-        #@+node:ekr.20150514063305.162: *6* get_user_types
+        #@+node:ekr.20150514063305.162: *6* get_user_types (C_To_Python)
         def get_user_types(self):
             c = self.c
             self.class_list = c.config.getData('c-to-python-class-list') or []
@@ -734,15 +736,15 @@ class ConvertCommandsClass(BaseEditCommandsClass):
             i = 1
             while i < len(args):
                 i = self.skip_ws_and_nl(args, i)
-                c = args[i]
-                if c.isalpha():
+                ch = args[i]
+                if ch.isalpha():
                     j = self.skip_past_word(args, i)
                     lastWord = args[i: j]
                     i = j
-                elif c == ',' or c == ')':
+                elif ch == ',' or ch == ')':
                     for item in lastWord:
                         result.append(item)
-                    if lastWord != [] and c == ',':
+                    if lastWord != [] and ch == ',':
                         result.append(',')
                     lastWord = []
                     i += 1
@@ -1009,7 +1011,7 @@ class ConvertCommandsClass(BaseEditCommandsClass):
                     d[name.strip()] = value.strip()
                 if trace:
                     print('@data %s...' % kind)
-                    for key in sorted(d.keys()):
+                    for key in sorted(d):
                         print('  %s: %s' % (key, d.get(key)))
                 return d
             #@+node:ekr.20160213070235.5: *6* msf.scan_patterns
@@ -1522,15 +1524,15 @@ class ConvertCommandsClass(BaseEditCommandsClass):
                 i = 1
                 while i < len(args):
                     i = self.skip_ws_and_nl(args, i)
-                    c = args[i]
-                    if c.isalpha():
+                    ch = args[i]
+                    if ch.isalpha():
                         j = self.skip_past_word(args, i)
                         lastWord = args[i: j]
                         i = j
-                    elif c == ',' or c == ')':
+                    elif ch == ',' or ch == ')':
                         for item in lastWord:
                             result.append(item)
-                        if lastWord != [] and c == ',':
+                        if lastWord != [] and ch == ',':
                             result.append(',')
                         lastWord = []
                         i += 1
@@ -1645,7 +1647,7 @@ class ConvertCommandsClass(BaseEditCommandsClass):
             #@-others
         #@-others
         c = self.c
-        self.Python_To_CoffeeScript(c).go()
+        TS_To_Python(c).go()
         c.bodyWantsFocus()
     #@+node:ekr.20160321042444.1: *3* ccc.import-jupyter-notebook
     @cmd('import-jupyter-notebook')
@@ -1672,7 +1674,7 @@ class ConvertCommandsClass(BaseEditCommandsClass):
     #@+node:ekr.20160321072007.1: *3* ccc.export-jupyter-notebook
     @cmd('export-jupyter-notebook')
     def exportJupyterNotebook(self, event):
-        '''Prompt for a Jupyter (.ipynb) file and convert it to a Leo outline.'''
+        '''Convert the present outline to a .ipynb file.'''
         from leo.plugins.writers.ipynb import Export_IPYNB
         c = self.c
         Export_IPYNB(c).export_outline(c.p)

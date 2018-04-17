@@ -1,81 +1,147 @@
 #@+leo-ver=5-thin
 #@+node:ekr.20140723122936.18141: * @file importers/elisp.py
-'''The @auto importer for elisp.'''
+'''The @auto importer for the elisp language.'''
+import re
+import leo.plugins.importers.linescanner as linescanner
+Importer = linescanner.Importer
 import leo.core.leoGlobals as g
-import leo.plugins.importers.basescanner as basescanner
 #@+others
-#@+node:ekr.20140723122936.18036: ** class ElispScanner
-class ElispScanner(basescanner.BaseScanner):
-    #@+others
-    #@+node:ekr.20140723122936.18037: *3*  __init__ (ElispScanner)
-    def __init__(self, importCommands, atAuto):
-        # Init the base class.
-        basescanner.BaseScanner.__init__(self, importCommands, atAuto=atAuto, language='lisp')
-        # Set the parser delims.
-        self.atAutoWarnsAboutLeadingWhitespace = False # 2010/09/29.
-        self.warnAboutUnderindentedLines = False # 2010/09/29.
-        self.blockCommentDelim1 = None
-        self.blockCommentDelim2 = None
-        self.lineCommentDelim = ';'
-        self.lineCommentDelim2 = None
-        self.blockDelim1 = '('
-        self.blockDelim2 = ')'
-        self.extraIdChars = '-'
-        self.strict = False
-    #@+node:ekr.20140723122936.18038: *3* Overrides (ElispScanner)
-    # skipClass/Function/Signature are defined in the base class.
-    #@+node:ekr.20140723122936.18039: *4* startsClass/Function & skipSignature
-    def startsClass(self, unused_s, unused_i):
-        '''Return True if s[i:] starts a class definition.
-        Sets sigStart, sigEnd, sigId and codeEnd ivars.'''
-        return False
+#@+node:ekr.20161127184128.2: ** class Elisp_Importer
+class Elisp_Importer(Importer):
+    '''The importer for the elisp lanuage.'''
 
-    def startsFunction(self, s, i):
-        '''Return True if s[i:] starts a function.
-        Sets sigStart, sigEnd, sigId and codeEnd ivars.'''
-        self.startSigIndent = self.getLeadingIndent(s, i)
-        self.sigStart = i
-        self.codeEnd = self.sigEnd = self.sigId = None
-        if not g.match(s, i, '('): return False
-        end = self.skipBlock(s, i)
-        # g.trace('%3s %15s block: %s' % (i,repr(s[i:i+10]),repr(s[i:end])))
-        if not g.match(s, end - 1, ')'): return False
-        i = g.skip_ws(s, i + 1)
-        if not g.match_word(s, i, 'defun'): return False
-        i += len('defun')
-        sigEnd = i = g.skip_ws_and_nl(s, i)
-        j = self.skipId(s, i) # Bug fix: 2009/09/30
-        word = s[i: j]
-        if not word: return False
-        self.codeEnd = end + 1
-        self.sigEnd = sigEnd
-        self.sigId = word
-        return True
-    #@+node:ekr.20140723122936.18040: *4* startsString
-    def startsString(self, s, i):
-        # Single quotes are not strings.
-        # ?\x is the universal character escape.
-        return g.match(s, i, '"') or g.match(s, i, '?\\')
-    #@+node:ekr.20140723122936.18041: *4* skipBlock
-    def skipBlock(self, s, i, delim1=None, delim2=None):
-        # Call the base class
-        i = basescanner.BaseScanner.skipBlock(self, s, i, delim1, delim2)
-        # Skip the closing parens of enclosing constructs.
-        # This prevents the "does not end in a newline error.
-        while i < len(s) and s[i] == ')':
-            i += 1
-        return i
-    #@+node:ekr.20140723122936.18042: *4* skipString
-    def skipString(self, s, i):
-        # Returns len(s) on unterminated string.
-        if s.startswith('?', i):
-            return min(len(s), i + 3)
+    def __init__(self, importCommands, **kwargs):
+        '''Elisp_Importer.__init__'''
+        # Init the base class.
+        Importer.__init__(self,
+            importCommands,
+            language = 'lisp',
+            state_class = Elisp_ScanState,
+            strict = False,
+        )
+
+    #@+others
+    #@+node:ekr.20170205195239.1: *3* elisp_i.get_new_dict
+    #@@nobeautify
+
+    def get_new_dict(self, context):
+        '''elisp state dictionary for the given context.'''
+        trace = False and g.unitTesting
+        comment, block1, block2 = self.single_comment, self.block1, self.block2
+
+        def add_key(d, pattern, data):
+            key = pattern[0]
+            aList = d.get(key,[])
+            aList.append(data)
+            d[key] = aList
+
+        if context:
+            d = {
+                # key    kind   pattern  ends?
+                '\\':   [('len+1', '\\', None),],
+                '"':    [('len', '"',    context == '"'),],
+                ### "'":    [('len', "'",    context == "'"),],
+            }
+            if block1 and block2:
+                add_key(d, block2, ('len', block2, True))
+                    # Bug fix: 2016/12/04: the tuple contained block1, not block2.
         else:
-            return g.skip_string(s, i, verbose=False)
+            # Not in any context.
+            d = {
+                # key    kind pattern new-ctx  deltas
+                '\\':[('len+1', '\\', context, None),],
+                '"':    [('len', '"', '"',     None),],
+                ### "'":    [('len', "'", "'",     None),],
+                '{':    [('len', '{', context, (1,0,0)),],
+                '}':    [('len', '}', context, (-1,0,0)),],
+                '(':    [('len', '(', context, (0,1,0)),],
+                ')':    [('len', ')', context, (0,-1,0)),],
+                '[':    [('len', '[', context, (0,0,1)),],
+                ']':    [('len', ']', context, (0,0,-1)),],
+            }
+            if comment:
+                add_key(d, comment, ('all', comment, '', None))
+            if block1 and block2:
+                add_key(d, block1, ('len', block1, block1, None))
+        if trace: g.trace('created %s dict for %4r state ' % (self.name, context))
+        return d
+    #@+node:ekr.20161127184128.4: *3* elisp_i.clean_headline
+    elisp_clean_pattern = re.compile(r'^\s*\(\s*defun\s+([\w_-]+)')
+
+    def clean_headline(self, s, p=None):
+        '''Return a cleaned up headline s.'''
+        m = self.elisp_clean_pattern.match(s)
+        if m and m.group(1):
+            return 'defun %s' % m.group(1)
+        else:
+            return s.strip()
+    #@+node:ekr.20161127185851.1: *3* elisp_i.starts_block
+    def starts_block(self, i, lines, new_state, prev_state):
+        '''True if the new state starts a block.'''
+        line = lines[i]
+        return self.elisp_clean_pattern.match(line)
+    #@+node:ekr.20170205194802.1: *3* elisp_i.trace_status
+    def trace_status(self, line, new_state, prev_state, stack, top):
+        '''Print everything important in the i.gen_lines loop.'''
+        if line.isspace() or line.strip().startswith(';'):
+            return # for elisp
+        print('')
+        try:
+            g.trace('===== %r' % line)
+        except Exception:
+            g.trace('     top.p: %s' % g.toEncodedString(top.p.h))
+        # print('len(stack): %s' % len(stack))
+        print(' new_state: %s' % new_state)
+        print('prev_state: %s' % prev_state)
+        # print(' top.state: %s' % top.state)
+        g.printList(stack)
+    #@-others
+#@+node:ekr.20161127184128.6: ** class Elisp_ScanState
+class Elisp_ScanState:
+    '''A class representing the state of the elisp line-oriented scan.'''
+
+    def __init__(self, d=None):
+        '''Elisp_ScanState.__init__'''
+        if d:
+            prev = d.get('prev')
+            self.context = prev.context
+            self.parens = prev.parens
+        else:
+            self.context = ''
+            self.parens = 0
+
+    def __repr__(self):
+        '''Elisp_ScanState.__repr__'''
+        return "Elisp_ScanState context: %r parens: %s" % (
+            self.context, self.parens)
+
+    __str__ = __repr__
+
+    #@+others
+    #@+node:ekr.20161127184128.7: *3* elisp_state.level
+    def level(self):
+        '''Elisp_ScanState.level.'''
+        return self.parens
+
+    #@+node:ekr.20161127184128.8: *3* elisp_state.update
+    def update(self, data):
+        '''
+        Elisp_ScanState.update
+
+        Update the state using the 6-tuple returned by i.scan_line.
+        Return i = data[1]
+        '''
+        context, i, delta_c, delta_p, delta_s, bs_nl = data
+        # All ScanState classes must have a context ivar.
+        self.context = context
+        self.parens += delta_p
+        return i
     #@-others
 #@-others
 importer_dict = {
-    'class': ElispScanner,
-    'extensions': ['.el',],
+    'class': Elisp_Importer,
+    'extensions': ['.el'],
 }
+#@@language python
+#@@tabwidth -4
 #@-leo

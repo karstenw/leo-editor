@@ -51,10 +51,10 @@ class Export_IPYNB(object):
             except IOError:
                 g.es_print('can not open: %s' % fn)
     #@+node:ekr.20160412114239.1: *4* write: @auto entry
-    def write(self, root, forceSentinels=False):
+    def write(self, root):
         '''
         Export_IPYNB: entry point for @auto writes.
-        Signature must match signature of BaseScanner.write().
+        Signature must match signature of BaseWriter.write().
         '''
         at = self.at
         # fn = root.atAutoNodeName()
@@ -177,7 +177,7 @@ class Export_IPYNB(object):
             type_ = p_key.b.strip()
         else:
             colorizer = self.c.frame.body.colorizer
-            language = colorizer.scanColorDirectives(p)
+            language = colorizer.scanLanguageDirectives(p)
             if language in ('rest', 'markdown', 'md'):
                 type_ = 'markdown'
             else:
@@ -397,7 +397,7 @@ class Export_IPYNB(object):
             c,
             defaultextension=".ipynb",
             filetypes=[
-                ("Jypyter files", "*.ipynb"),
+                ("Jupyter files", "*.ipynb"),
                 ("All files", "*"),
             ],
             initialfile='',
@@ -421,8 +421,10 @@ class Export_IPYNB(object):
     #@-others
 #@-others
 writer_dict = {
-    '@auto': ['@auto-jypyter','@auto-ipynb',],
+    '@auto': ['@auto-jupyter','@auto-ipynb',],
     'class': Export_IPYNB,
     'extensions': ['.ipynb',],
 }
+#@@language python
+#@@tabwidth -4
 #@-leo

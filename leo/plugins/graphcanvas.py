@@ -3,6 +3,15 @@
 """
 Provides a widget for displaying graphs (networks) in Leo.
 
+graphcanvas has one command:
+
+`graph-toggle-autoload`
+
+    This command remembers the current node, and auto loads the associated
+    graph when the outline is loaded in the future.  Using the command again
+    cancels this behavior.
+
+
 Requires Qt and the backlink.py plugin.
 
 There are various bindings for graphviz:
@@ -85,16 +94,22 @@ def onCreate (tag, keys):
     graphcanvasController(c)
     if hasattr(c, 'db') and c_db_key in c.db:
         gnx = c.db[c_db_key]
-        for i in c.all_unique_nodes():
-            if i.gnx == gnx:
-                c.graphcanvasController.loadGraph(
-                c.vnode2position(i).self_and_subtree())
-                c.graphcanvasController.loadLinked('all')
-                return
+        for v in c.all_unique_nodes():
+            if v.gnx == gnx:
+                gcc = c.graphcanvasController
+                gcc.loadGraph(
+                    c.vnode2position(v).self_and_subtree())
+                gcc.loadLinked('all')
+                if gcc.nodeItem:
+                    gcc.lastNodeItem = gcc.nodeItem.get(v)
 #@+node:tbrown.20110716130512.21969: ** command graph-toggle-autoload
 @g.command('graph-toggle-autoload')
 def toggle_autoload(event):
-
+    """
+    This command remembers the current node, and auto loads the associated
+    graph when the outline is loaded in the future.  Using the command again
+    cancels this behavior.
+    """
     c = event.get('c')
     if not c:
         return
@@ -112,33 +127,22 @@ class graphcanvasUI(QtWidgets.QWidget):
     def __init__(self, owner=None):
 
         self.owner = owner
-
-        # a = QtGui.QApplication([]) # argc, argv );
-
         QtWidgets.QWidget.__init__(self)
         uiPath = g.os_path_join(g.app.leoDir,
             'plugins', 'GraphCanvas', 'GraphCanvas.ui')
-
         # change directory for this to work
         old_dir = os.getcwd()
         try:
-
             os.chdir(g.os_path_join(g.computeLeoDir(), ".."))
-
             form_class, base_class = uic.loadUiType(uiPath)
             self.owner.c.frame.log.createTab('Graph', widget = self)
             self.UI = form_class()
             self.UI.setupUi(self)
-
         finally:
-
             os.chdir(old_dir)
-
         self.canvas = QtWidgets.QGraphicsScene()
-
         self.canvasView = GraphicsView(self.owner, self.canvas)
         self.canvasView.setDragMode(QtWidgets.QGraphicsView.ScrollHandDrag)
-
         self.UI.canvasFrame.addWidget(self.canvasView)
         self.canvasView.setSceneRect(0,0,300,300)
         self.canvasView.setRenderHints(QtGui.QPainter.Antialiasing)
@@ -612,6 +616,8 @@ class linkItem(QtWidgets.QGraphicsItemGroup):
 
         pass glue object and let it key nodeItems to leo nodes
         """
+        # pylint: disable=keyword-arg-before-vararg
+            # putting *args first is invalid in Python 2.x.
         self.glue = glue
         QtWidgets.QGraphicsItemGroup.__init__(self)
         self.line = QtWidgets.QGraphicsLineItem(*args)
@@ -669,30 +675,26 @@ class linkItem(QtWidgets.QGraphicsItemGroup):
 class graphcanvasController(object):
     """Display and edit links in leo"""
     #@+others
-    #@+node:bob.20110119123023.7409: *3* __init__
-
+    #@+node:bob.20110119123023.7409: *3* __init__ & reloadSettings (graphcanvasController)
     def __init__ (self,c):
 
         self.c = c
-
-        self.graph_manual_layout = c.config.getBool('graph-manual-layout',default=False)
-
         self.c.graphcanvasController = self
-
         self.selectPen = QtGui.QPen(QtGui.QColor(255,0,0))
         self.selectPen.setWidth(2)
-
         self.ui = graphcanvasUI(self)
-
-
         g.registerHandler('headkey2', lambda a,b: self.do_update())
         g.registerHandler("select2", self.onSelect2)
-
-        self.initIvars()
-
         # g.registerHandler('open2', self.loadLinks)
-        # already missed initial 'open2' because of after-create-leo-frame, so
-        # self.loadLinksInt()
+            # already missed initial 'open2' because of after-create-leo-frame, so
+            # self.loadLinksInt()
+        self.initIvars()
+        self.reloadSettings()
+        
+    def reloadSettings(self):
+        c = self.c
+        c.registerReloadSettings(self)
+        self.graph_manual_layout = c.config.getBool('graph-manual-layout',default=False)
     #@+node:bob.20110119123023.7410: *3* initIvars
     def initIvars(self):
         """initialize, called by __init__ and clear"""
@@ -784,7 +786,7 @@ class graphcanvasController(object):
                 self.nodeItem[i].do_update()
             elif pydot:
                 lst = G.get_node(''.join(['"', i.gnx, '"']))
-                if len(lst) > 0:
+                if lst:
                     x,y = map(float, lst[0].get_pos().strip('"').split(','))
                     i.u['_bklnk']['x'] = x
                     i.u['_bklnk']['y'] = -y
@@ -1007,7 +1009,7 @@ class graphcanvasController(object):
         nn = self.c.currentPosition().insertAfter()
         nn.setHeadString('node')
         self.c.selectPosition(nn)
-        self.c.redraw_now()
+        self.c.redraw()
         self.loadGraph(pnt=pnt)
 
     #@+node:bob.20110119123023.7418: *3* pressLink
@@ -1042,7 +1044,6 @@ class graphcanvasController(object):
 
         if not self.lastNodeItem:
             return
-
         node = self.node[self.lastNodeItem]
 
         self.ui.canvas.removeItem(self.lastNodeItem)
@@ -1116,6 +1117,8 @@ class graphcanvasController(object):
     #@+node:bob.20110119123023.7422: *3* goto
     def goto(self):
         """make outline select node"""
+        if not self.lastNodeItem:
+            return
         v = self.node[self.lastNodeItem]
         p = self.c.vnode2position(v)
         if self.c.positionExists(p):
@@ -1182,6 +1185,8 @@ class graphcanvasController(object):
     #@+node:tbrown.20110407091036.17535: *3* setNode
     def setNode(self, node_class):
 
+        if not self.lastNodeItem:
+            return
         node = self.node[self.lastNodeItem]
         self.unLoad()
 
@@ -1251,6 +1256,8 @@ class graphcanvasController(object):
     #@+node:bob.20110120111825.3354: *5* resetNode
     def resetNode(self):
 
+        if not self.lastNodeItem:
+            return
         node = self.node[self.lastNodeItem]
 
         if 'x' in node.u['_bklnk']:
@@ -1273,22 +1280,24 @@ class graphcanvasController(object):
         painter = QtGui.QPainter(image)
         self.ui.canvas.render(painter)
         painter.end()
-        path = QtWidgets.QFileDialog.getSaveFileName(
+        filepath, extension = QtWidgets.QFileDialog.getSaveFileName(
             caption="Export to File",
             filter="*.png",
-            selectedFilter="Images (*.png)",
         )
-        image.save(path)
+        if filepath:
+            image.save(filepath)
     #@+node:bob.20110121113659.3413: *4* Formatting
     #@+node:bob.20110120111825.3356: *5* setColor
     def setColor(self):
 
+        if self.lastNodeItem not in self.node:
+            return
         node = self.node[self.lastNodeItem]
         item = self.nodeItem[node]
 
         if 'color' in node.u['_bklnk']:
             color = node.u['_bklnk']['color']
-            newcolor = QtWidgets.QColorDialog.getColor(color)
+            newcolor = QtWidgets.QColorDialog.getColor(QtGui.QColor(color))
         else:
             newcolor = QtWidgets.QColorDialog.getColor()
 
@@ -1298,16 +1307,18 @@ class graphcanvasController(object):
             node.u['_bklnk']['color'] = newcolor
 
         self.releaseNode(item)  # reselect
-
+        self.c.redraw()  # update color of node in the tree too
     #@+node:bob.20110120111825.3358: *5* setTextColor
     def setTextColor(self):
 
+        if self.lastNodeItem not in self.node:
+            return
         node = self.node[self.lastNodeItem]
         item = self.nodeItem[node]
 
         if 'tcolor' in node.u['_bklnk']:
             color = node.u['_bklnk']['tcolor']
-            newcolor = QtWidgets.QColorDialog.getColor(color)
+            newcolor = QtWidgets.QColorDialog.getColor(QtGui.QColor(color))
         else:
             newcolor = QtWidgets.QColorDialog.getColor()
 
@@ -1317,13 +1328,16 @@ class graphcanvasController(object):
             node.u['_bklnk']['tcolor'] = newcolor
 
         self.releaseNode(item)  # reselect
+        self.c.redraw()  # update color of node in the tree too
     #@+node:bob.20110120111825.3360: *5* clearFormatting
     def clearFormatting(self):
 
+        if self.lastNodeItem not in self.node:
+            return
         node = self.node[self.lastNodeItem]
         item = self.nodeItem[node]
         # FIXME: need node.clear_formatting()
-        if hasattr(item, 'bg'):
+        if hasattr(item, 'bg') and hasattr(item.bg, 'setBrush'):
             item.bg.setBrush(QtGui.QBrush(QtGui.QColor(200,240,200)))
         if hasattr(item, 'text'):
             item.text.setDefaultTextColor(QtGui.QColor(0,0,0))
@@ -1332,6 +1346,7 @@ class graphcanvasController(object):
         if 'tcolor' in node.u['_bklnk']:
             del node.u['_bklnk']['tcolor']
         self.releaseNode(self.nodeItem[node])
+        self.c.redraw()  # update color of node in the tree too
     #@-others
     #@-others
 #@-others

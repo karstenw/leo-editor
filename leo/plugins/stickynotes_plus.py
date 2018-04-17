@@ -10,7 +10,7 @@ alt-x stickynote to pop out current node as a note.
 #@-<< docstring >>
 # Disable Qt warnings.
 #@+<< imports >>
-#@+node:ekr.20100103100944.5391: ** << imports >>
+#@+node:ekr.20100103100944.5391: ** << imports >> (stickynotes_plus.py)
 import leo.core.leoGlobals as g
 
 # Fail gracefully if the gui is not qt.
@@ -28,11 +28,23 @@ except SyntaxError:
     print('stickynotes_plus.py: syntax error in markdown')
     markdown = None
 
-# pylint: disable=no-name-in-module
-from PyQt4.QtCore import (QSize,QVariant, Qt,SIGNAL,QTimer,QString)
-from PyQt4.QtGui import (QAction,QFont,QIcon,QMenu,QTextCursor,
-    QTextCharFormat,QTextBlockFormat,QTextListFormat,QTextEdit,QPlainTextEdit)
-    # QApplication,QColor,QFontMetrics,QKeySequence, QPixmap,
+from leo.core.leoQt import QString, QtCore, QtGui, QtWidgets # isQt5,
+Qt = QtCore.Qt
+# Widgets
+QAction = QtWidgets.QAction
+QMenu = QtWidgets.QMenu
+QPlainTextEdit = QtWidgets.QPlainTextEdit
+QTextEdit = QtWidgets.QTextEdit
+# Other gui elements.
+QFont = QtGui.QFont
+QIcon = QtGui.QIcon
+QSize = QtCore.QSize
+QTextBlockFormat = QtGui.QTextBlockFormat
+QTextCharFormat = QtGui.QTextCharFormat
+QTextCursor = QtGui.QTextCursor
+QTextListFormat = QtGui.QTextListFormat
+QTimer = QtCore.QTimer
+QVariant = QtCore.QVariant
 #@-<< imports >>
 #@+others
 #@+node:ekr.20100103100944.5392: ** styling
@@ -111,7 +123,8 @@ class SimpleRichText(QTextEdit):
         self.boldAct.setCheckable(True)
         self.boldAct.setShortcut(self.tr("Ctrl+B"))
         self.boldAct.setStatusTip(self.tr("Make the text bold"))
-        self.connect(self.boldAct, SIGNAL("triggered()"), self.setBold)
+        ### self.connect(self.boldAct, SIGNAL("triggered()"), self.setBold)
+        self.triggered.connect(self.setBold)
         self.addAction(self.boldAct)
 
         boldFont = self.boldAct.font()
@@ -122,7 +135,8 @@ class SimpleRichText(QTextEdit):
         self.italicAct.setCheckable(True)
         self.italicAct.setShortcut(self.tr("Ctrl+I"))
         self.italicAct.setStatusTip(self.tr("Make the text italic"))
-        self.connect(self.italicAct, SIGNAL("triggered()"), self.setItalic)
+        ### self.connect(self.italicAct, SIGNAL("triggered()"), self.setItalic)
+        self.triggered.connect(self.setItalic)
         self.addAction(self.italicAct)
 
     def setBold(self):
@@ -169,27 +183,21 @@ class notetextedit(QTextEdit):
         super(notetextedit, self).__init__(parent)
 
         self.save = save
-
         self.setLineWrapMode(QTextEdit.WidgetWidth)
         self.setTabChangesFocus(True)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setMinimumWidth(300)
-
         self.setMouseTracking(True)
-
         font = QFont()
         font.setPointSize(10)
         font.setFamily("helvetica")
         document = self.document()
         document.setDefaultFont(font)
-
         self.font = font
-
-        document.setDefaultStyleSheet("pre{margin-top:0px; margin-bottom:0px} li{margin-top:0px; margin-bottom:0px}")
-
+        document.setDefaultStyleSheet(
+            "pre{margin-top:0px; margin-bottom:0px} li{margin-top:0px; margin-bottom:0px}")
         QTimer.singleShot(0, get_markdown)
-
     #@+node:ekr.20100103100944.5398: *3* focusOutEvent
     def focusOutEvent__(self, event):
         #print "focus out"
@@ -492,7 +500,8 @@ class notetextedit(QTextEdit):
         #print "mouseMoveEvent"
         pos = event.pos()
         anch = self.anchorAt(pos)
-        self.viewport().setCursor(Qt.PointingHandCursor if anch else Qt.IBeamCursor)
+        self.viewport().setCursor(
+            Qt.PointingHandCursor if anch else Qt.IBeamCursor)
         QTextEdit.mouseMoveEvent(self, event) #? recursion
 
     #@+node:ekr.20100103100944.5417: *3* mouseReleaseEvent
@@ -623,11 +632,9 @@ def stickynote_f(event):
     def textchanged_cb():
         nf.dirty = True
 
-    nf.connect(nf,
-        SIGNAL("textChanged()"),textchanged_cb)
-
+    ### nf.connect(nf, SIGNAL("textChanged()"),textchanged_cb)
+    nf.textChanged.connect(textchanged_cb)
     nf.show()
-
     g.app.stickynotes[p.gnx] = nf
 #@+node:ekr.20100103100944.5421: ** g.command('stickynoter')
 @g.command('stickynoter')
@@ -666,11 +673,9 @@ def stickynoter_f(event):
     def textchanged_cb():
         nf.dirty = True
 
-    nf.connect(nf,
-        SIGNAL("textChanged()"),textchanged_cb)
-
+    ### nf.connect(nf,SIGNAL("textChanged()"),textchanged_cb)
+    nf.textChanged.connect(textchanged_cb)
     nf.show()
-
     g.app.stickynotes[p.gnx] = nf
 #@+node:ekr.20100103100944.5422: ** g.command('stickynoteplus')
 @g.command('stickynoteplus')
@@ -709,11 +714,9 @@ def stickynoteplus_f(event):
     def textchanged_cb():
         nf.dirty = True
 
-    nf.connect(nf,
-        SIGNAL("textChanged()"),textchanged_cb)
-
+    ### nf.connect(nf, SIGNAL("textChanged()"),textchanged_cb)
+    nf.textChanged.connect(textchanged_cb)
     nf.show()
-
     g.app.stickynotes[p.gnx] = nf
 #@-others
 #@@language python

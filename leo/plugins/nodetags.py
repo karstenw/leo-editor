@@ -95,12 +95,12 @@ whitespace (calling .strip()).
 #@+<< imports >>
 #@+node:peckj.20140804103733.9241: ** << imports >>
 import leo.core.leoGlobals as g
+import leo.core.leoNodes as leoNodes
 import re
-#from PyQt4 import QtGui, QtCore
 from leo.core.leoQt import QtWidgets, QtCore
 #@-<< imports >>
 #@+others
-#@+node:peckj.20140804103733.9244: ** init
+#@+node:peckj.20140804103733.9244: ** init (nodetags.py)
 def init ():
     '''Return True if the plugin has loaded successfully.'''
     if g.app.gui is None:
@@ -110,7 +110,7 @@ def init ():
         #g.registerHandler(('new','open2'),onCreate)
         g.registerHandler('after-create-leo-frame',onCreate)
         g.plugin_signon(__name__)
-    else:
+    elif g.app.gui.guiName() != 'curses':
         g.es('Plugin %s not loaded.' % __name__, color='red')
     return ok
 #@+node:peckj.20140804103733.9245: ** onCreate
@@ -139,8 +139,7 @@ class TagController(object):
     #@+node:peckj.20140804103733.9263: *5* initialize_taglist
     def initialize_taglist(self):
         taglist = []
-        for v in self.c.all_unique_nodes():
-            p = self.c.vnode2position(v)
+        for p in self.c.all_unique_positions():
             for tag in self.get_tags(p):
                 if tag not in taglist:
                     taglist.append(tag)
@@ -156,54 +155,64 @@ class TagController(object):
         if tag not in self.taglist:
             self.taglist.append(tag)
         nodelist = self.get_tagged_nodes(tag)
-        if len(nodelist) == 0:
+        if not nodelist:
             self.taglist.remove(tag)
         self.ui.update_all()
     #@+node:peckj.20140804103733.9258: *4* get_tagged_nodes
     def get_tagged_nodes(self, tag):
-        ''' return a list of positions of nodes containing the tag, with * as a wildcard '''
+        ''' return a list of *positions* of nodes containing the tag, with * as a wildcard '''
         nodelist = []
-
         # replace * with .* for regex compatibility
         tag = tag.replace('*', '.*')
-
         regex = re.compile(tag)
-
-        for node in self.c.all_unique_nodes():
-            p = self.c.vnode2position(node)
+        for p in self.c.all_unique_positions():
+            for tag in self.get_tags(p):
+                if regex.match(tag):
+                    nodelist.append(p.copy())
+                    break
+        return nodelist
+    #@+node:vitalije.20170811150914.1: *4* get_tagged_gnxes
+    def get_tagged_gnxes(self, tag):
+        c = self.c
+        tag = tag.replace('*', '.*')
+        regex = re.compile(tag)
+        for p in c.all_unique_positions():
             for t in self.get_tags(p):
                 if regex.match(t):
-                    nodelist.append(p)
-                    break
-
-        return nodelist
+                    yield p.v.gnx
     #@+node:peckj.20140804103733.9265: *3* individual nodes
     #@+node:peckj.20140804103733.9259: *4* get_tags
     def get_tags(self, p):
-        ''' returns a list of tags applied to p '''
+        ''' returns a list of tags applied to position p.'''
+        trace = False and not g.unitTesting
         if p:
             tags = p.v.u.get(self.TAG_LIST_KEY, set([]))
+            if trace and tags: g.trace(tags, p.h)
             return list(tags)
         else:
             return []
     #@+node:peckj.20140804103733.9260: *4* add_tag
     def add_tag(self, p, tag):
-        ''' adds 'tag' to the taglist of p '''
-        tags = p.v.u.get(self.TAG_LIST_KEY, set([]))
+        ''' adds 'tag' to the taglist of v '''
+        # cast to set() incase JSON storage (leo_cloud plugin) converted to list
+        tags = set(p.v.u.get(self.TAG_LIST_KEY, set([])))
         tags.add(tag)
         p.v.u[self.TAG_LIST_KEY] = tags
         self.c.setChanged(True)
         self.update_taglist(tag)
     #@+node:peckj.20140804103733.9261: *4* remove_tag
     def remove_tag(self, p, tag):
-        ''' removes 'tag' from the taglist of p '''
-        tags = p.v.u.get(self.TAG_LIST_KEY, set([]))
+        ''' removes 'tag' from the taglist of position p. '''
+        # cast to set() incase JSON storage (leo_cloud plugin) converted to list
+        v = p.v
+        tags = set(v.u.get(self.TAG_LIST_KEY, set([])))
         if tag in tags:
             tags.remove(tag)
-        if len(tags) == 0:
-            del p.v.u[self.TAG_LIST_KEY] # prevent a few corner cases, and conserve disk space
+        if tags:
+            v.u[self.TAG_LIST_KEY] = tags
         else:
-            p.v.u[self.TAG_LIST_KEY] = tags
+            del v.u[self.TAG_LIST_KEY]
+            # prevent a few corner cases, and conserve disk space
         self.c.setChanged(True)
         self.update_taglist(tag)
     #@-others
@@ -223,6 +232,7 @@ class LeoTagWidget(QtWidgets.QWidget):
         self.search_re = '(&|\||-|\^)'
         self.custom_searches = []
         g.registerHandler('select2', self.select2_hook)
+        g.registerHandler('create-node', self.command2_hook) # fix tag jumplist positions after new node insertion
         g.registerHandler('command2', self.command2_hook)
     #@+node:peckj.20140804114520.15202: *4* initUI
     def initUI(self):
@@ -234,23 +244,23 @@ class LeoTagWidget(QtWidgets.QWidget):
         # verticalLayout
         self.verticalLayout_2 = QtWidgets.QVBoxLayout(self)
         self.verticalLayout_2.setContentsMargins(0,1,0,1)
-        self.verticalLayout_2.setObjectName("verticalLayout_2")
+        self.verticalLayout_2.setObjectName("nodetags-verticalLayout_2")
 
         # horizontalLayout: contains
         # "Refresh" button
         # comboBox
         self.horizontalLayout = QtWidgets.QHBoxLayout()
         self.horizontalLayout.setContentsMargins(0,0,0,0)
-        self.horizontalLayout.setObjectName("horizontalLayout")
+        self.horizontalLayout.setObjectName("nodetags-horizontalLayout")
 
         # horizontalLayout2: contains
         # label2
         # not much by default -- it's a place to add buttons for current tags
         self.horizontalLayout2 = QtWidgets.QHBoxLayout()
         self.horizontalLayout2.setContentsMargins(0,0,0,0)
-        self.horizontalLayout2.setObjectName("horizontalLayout2")
+        self.horizontalLayout2.setObjectName("nodetags-horizontalLayout2")
         label2 = QtWidgets.QLabel(self)
-        label2.setObjectName("label2")
+        label2.setObjectName("nodetags-label2")
         label2.setText("Tags for current node:")
         self.horizontalLayout2.addWidget(label2)
 
@@ -260,25 +270,25 @@ class LeoTagWidget(QtWidgets.QWidget):
         # horizontalLayout2
         # label
         self.verticalLayout = QtWidgets.QVBoxLayout()
-        self.verticalLayout.setObjectName("verticalLayout")
+        self.verticalLayout.setObjectName("nodetags-verticalLayout")
 
         self.comboBox = QtWidgets.QComboBox(self)
-        self.comboBox.setObjectName("comboBox")
+        self.comboBox.setObjectName("nodetags-comboBox")
         self.comboBox.setEditable(True)
         self.horizontalLayout.addWidget(self.comboBox)
 
         self.pushButton = QtWidgets.QPushButton("+", self)
-        self.pushButton.setObjectName("pushButton")
+        self.pushButton.setObjectName("nodetags-pushButton")
         self.pushButton.setMinimumSize(24,24)
         self.pushButton.setMaximumSize(24,24)
         self.horizontalLayout.addWidget(self.pushButton)
         self.verticalLayout.addLayout(self.horizontalLayout)
         self.listWidget = QtWidgets.QListWidget(self)
-        self.listWidget.setObjectName("listWidget")
+        self.listWidget.setObjectName("nodetags-listWidget")
         self.verticalLayout.addWidget(self.listWidget)
         self.verticalLayout.addLayout(self.horizontalLayout2)
         self.label = QtWidgets.QLabel(self)
-        self.label.setObjectName("label")
+        self.label.setObjectName("nodetags-label")
         self.label.setText("Total: 0 items")
         self.verticalLayout.addWidget(self.label)
         self.verticalLayout_2.addLayout(self.verticalLayout)
@@ -292,32 +302,38 @@ class LeoTagWidget(QtWidgets.QWidget):
     #@+node:peckj.20140804114520.15204: *3* updates + interaction
     #@+node:peckj.20140804114520.15205: *4* item_selected
     def item_selected(self):
+        c = self.c
         key = id(self.listWidget.currentItem())
-        pos = self.mapping[key]
-        self.update_current_tags(pos)
-        self.c.selectPosition(pos)
-        self.c.redraw_now()
+        v = self.mapping[key]
+        if isinstance(v, leoNodes.VNode):
+            p = c.vnode2position(v)
+        assert isinstance(p, leoNodes.Position), repr(p)
+        self.update_current_tags(p)
+        c.selectPosition(p)
+        c.redraw()
     #@+node:peckj.20140804192343.6568: *5* update_current_tags
-    def update_current_tags(self,pos):
+    def update_current_tags(self, p):
         # clear out the horizontalLayout2
         hl2 = self.horizontalLayout2
         while hl2.count():
             child = hl2.takeAt(0)
             child.widget().deleteLater()
         label = QtWidgets.QLabel(self)
+        label.setObjectName("nodetags-label2")
         label.setText('Tags for current node:')
         hl2.addWidget(label)
-        tags = self.tc.get_tags(pos)
+        tags = self.tc.get_tags(p)
         # add tags
         for tag in tags:
             l = QtWidgets.QLabel(self)
             l.setText(tag)
+            l.setObjectName('nodetags-label3')
             hl2.addWidget(l)
             l.mouseReleaseEvent = self.callback_factory(tag)
-
     #@+node:peckj.20140804194839.6569: *6* callback_factory
     def callback_factory(self, tag):
         c = self.c
+
         def callback(event):
             p = c.p
             tc = c.theTagController
@@ -330,6 +346,7 @@ class LeoTagWidget(QtWidgets.QWidget):
                 idx = ui.comboBox.findText(tag)
                 ui.comboBox.setCurrentIndex(idx)
             ui.update_all()
+
         return callback
     #@+node:peckj.20140804114520.15206: *4* update_combobox
     def update_combobox(self):
@@ -340,6 +357,7 @@ class LeoTagWidget(QtWidgets.QWidget):
 
     #@+node:peckj.20140804114520.15207: *4* update_list
     def update_list(self):
+        c = self.c; gnxDict = c.fileCommands.gnxDict
         key = str(self.comboBox.currentText()).strip()
         current_tags = self.tc.get_all_tags()
         if key not in current_tags and key not in self.custom_searches:
@@ -347,21 +365,20 @@ class LeoTagWidget(QtWidgets.QWidget):
                 self.custom_searches.append(key)
 
         query = re.split(self.search_re, key)
-
         tags = []
         operations = []
-        for i in range(len(query)):
+        for i, s in enumerate(query):
             if i % 2 == 0:
-                tags.append(query[i].strip())
+                tags.append(s.strip())
             else:
-                operations.append(query[i].strip())
+                operations.append(s.strip())
         tags.reverse()
         operations.reverse()
 
-        resultset = set(self.tc.get_tagged_nodes(tags.pop()))
-        while len(operations) > 0:
+        resultset = set(self.tc.get_tagged_gnxes(tags.pop()))
+        while operations:
             op = operations.pop()
-            nodes = set(self.tc.get_tagged_nodes(tags.pop()))
+            nodes = set(self.tc.get_tagged_gnxes(tags.pop()))
             if op == '&':
                 resultset &= nodes
             elif op == '|':
@@ -373,10 +390,12 @@ class LeoTagWidget(QtWidgets.QWidget):
 
         self.listWidget.clear()
         self.mapping = {}
-        for n in resultset:
-            item = QtWidgets.QListWidgetItem(n.h)
-            self.listWidget.addItem(item)
-            self.mapping[id(item)] = n
+        for gnx in resultset:
+            n = gnxDict.get(gnx)
+            if n is not None:
+                item = QtWidgets.QListWidgetItem(n.h)
+                self.listWidget.addItem(item)
+                self.mapping[id(item)] = n
         count = self.listWidget.count()
         self.label.clear()
         self.label.setText("Total: %s nodes" % count)
@@ -385,7 +404,7 @@ class LeoTagWidget(QtWidgets.QWidget):
         ''' updates the tag GUI '''
         key = str(self.comboBox.currentText())
         self.update_combobox()
-        if len(key) > 0:
+        if key:
             idx = self.comboBox.findText(key)
             if idx == -1: idx = 0
         else:
@@ -397,7 +416,7 @@ class LeoTagWidget(QtWidgets.QWidget):
     def add_tag(self, event=None):
         p = self.c.p
         tag = str(self.comboBox.currentText()).strip()
-        if len(tag) == 0:
+        if not tag:
             return # no error message, probably an honest mistake
         elif len(re.split(self.search_re,tag)) > 1:
             g.es('Cannot add tags containing any of these characters: &|^-', color='red')
@@ -414,11 +433,11 @@ class LeoTagWidget(QtWidgets.QWidget):
         paste_cmds = ['paste-node',
                       'pasteOutlineRetainingClones', # strange that this one isn't canonicalized
                       'paste-retaining-clones']
-        if keywords.get('label') not in paste_cmds:
-            return
-
-        self.tc.initialize_taglist()
-        self.update_all()
+        if keywords.get('label') in paste_cmds:
+            self.tc.initialize_taglist()
+            self.update_all()
+    #@+node:tbnorth.20170313095036.1: *5* sf.find_setting
+    #Plugins:2-->User interface:21-->@file settings_finder.py:11-->class SettingsFinder:2-->sf.find_setting:5
     #@-others
 #@-others
 #@@language python
